@@ -19,6 +19,17 @@ pokazuje zainstalowaną i najnowszą wersję, pobiera APK i instaluje. Aktualizu
    - `name` – nazwa pokazywana w aktualizatorze,
    - `package` – `applicationId` apki (do sprawdzenia zainstalowanej wersji),
    - `asset` – opcjonalnie wyrażenie regularne nazwy pliku APK w release (domyślnie pierwszy `*.apk`).
+   Kilka apek w jednym repo (monorepo, np. `enigma2-epgscan`) — lista w `apps`, a `tag` to prefiks tagu wydań danej apki:
+
+   ```json
+   {
+     "apps": [
+       { "name": "E2Stream", "package": "pl.jardol.e2stream", "tag": "e2stream-", "asset": "e2stream-.*\\.apk" }
+     ]
+   }
+   ```
+
+   Z `tag` brana jest najwyższa wersja spośród wydań o tym prefiksie (nie musi być oznaczona jako „latest”).
 3. Wydawaj nowe wersje jako GitHub Release z plikiem APK (tag `vX.Y.Z`).
    Brany jest najnowszy release, który nie jest draftem ani prerelease.
 

@@ -21,6 +21,8 @@ data class AppItem(
     val installed: String? = null,
     val installedCode: Long = -1,
 ) {
+    /** Unikalny klucz wiersza (w jednym repo może być kilka apek). */
+    val key get() = "$repo#$pkg#$name"
     val isInstalled get() = installed != null
     val hasUpdate get() = isInstalled && apkUrl != null && Ver.newer(latest, installed)
     val canInstall get() = pkg.isNotEmpty() && apkUrl != null
@@ -69,7 +71,7 @@ object Catalog {
             if (!full.substringBefore('/').equals(owner, ignoreCase = true)) continue
             val topics = r.optJSONArray("topics") ?: continue
             if ((0 until topics.length()).none { topics.optString(it) == p.topic }) continue
-            out.add(readRepo(ctx, full, r.optString("default_branch", "main"), r.optString("name"), token))
+            out.addAll(readRepo(ctx, full, r.optString("default_branch", "main"), r.optString("name"), token))
         }
         out.sortWith(compareBy<AppItem>({ it.pkg != BuildConfigPkg.SELF }, { it.name.lowercase() }))
         p.catalogJson = JSONArray().apply { out.forEach { put(it.toJson()) } }.toString()
@@ -102,30 +104,65 @@ object Catalog {
         }
     }
 
-    private fun readRepo(ctx: Context, full: String, branch: String, repoName: String, token: String): AppItem {
-        // 1) updater.json
+    private fun err(full: String, name: String, pkg: String, msg: String?) =
+        listOf(AppItem(full, name, pkg, null, null, null, null, "", msg))
+
+    /**
+     * Apki z jednego repo. updater.json może opisywać jedną apkę albo kilka (monorepo):
+     *   {"name": "...", "package": "...", "asset": "regex", "tag": "prefiks-tagu-"}
+     *   {"apps": [ {...}, {...} ]}
+     * Z "tag": najwyższa wersja spośród wydań o tagu zaczynającym się od prefiksu.
+     * Bez "tag": wydanie oznaczone jako najnowsze (latest).
+     */
+    private fun readRepo(ctx: Context, full: String, branch: String, repoName: String, token: String): List<AppItem> {
         val meta = try {
             JSONObject(Http.get(ctx, "https://raw.githubusercontent.com/$full/$branch/updater.json", token))
         } catch (e: HttpException) {
-            val msg = if (e.code == 404) "Brak pliku updater.json w repo" else e.message
-            return AppItem(full, repoName, "", null, null, null, null, "", msg)
+            return err(full, repoName, "", if (e.code == 404) "Brak pliku updater.json w repo" else e.message)
         } catch (e: Exception) {
-            return AppItem(full, repoName, "", null, null, null, null, "", "updater.json: ${e.message}")
+            return err(full, repoName, "", "updater.json: ${e.message}")
         }
-        val name = meta.optString("name").ifEmpty { repoName }
-        val pkg = meta.optString("package")
-        val assetRe = meta.optString("asset").takeIf { it.isNotEmpty() }?.let {
-            try { Regex(it) } catch (_: Exception) { null }
-        }
-        if (pkg.isEmpty()) return AppItem(full, name, "", null, null, null, null, "", "updater.json bez pola \"package\"")
+        val defs = meta.optJSONArray("apps")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) } }
+            ?: listOf(meta)
 
-        // 2) najnowszy release
-        val rel = try {
-            JSONObject(Http.get(ctx, "https://api.github.com/repos/$full/releases/latest", token))
-        } catch (e: HttpException) {
-            val msg = if (e.code == 404) "Brak wydań (Releases)" else e.message
-            return AppItem(full, name, pkg, null, null, null, null, "", msg)
+        var releases: JSONArray? = null   // lista wydań, pobierana raz na repo
+        val out = ArrayList<AppItem>()
+        for (d in defs) {
+            val name = d.optString("name").ifEmpty { repoName }
+            val pkg = d.optString("package")
+            if (pkg.isEmpty()) { out += err(full, name, "", "updater.json bez pola \"package\""); continue }
+            val assetRe = d.optString("asset").takeIf { it.isNotEmpty() }?.let {
+                try { Regex(it) } catch (_: Exception) { null }
+            }
+            val prefix = d.optString("tag")
+            try {
+                if (prefix.isEmpty()) {
+                    val rel = JSONObject(Http.get(ctx, "https://api.github.com/repos/$full/releases/latest", token))
+                    out += fromRelease(full, name, pkg, rel, assetRe, "")
+                } else {
+                    val list = releases
+                        ?: JSONArray(Http.get(ctx, "https://api.github.com/repos/$full/releases?per_page=100", token))
+                            .also { releases = it }
+                    var best: AppItem? = null
+                    var lastErr: AppItem? = null
+                    for (i in 0 until list.length()) {
+                        val rel = list.getJSONObject(i)
+                        if (rel.optBoolean("draft") || rel.optBoolean("prerelease")) continue
+                        if (!rel.optString("tag_name").startsWith(prefix)) continue
+                        val cand = fromRelease(full, name, pkg, rel, assetRe, prefix)
+                        if (cand.apkUrl == null) { if (lastErr == null) lastErr = cand; continue }
+                        if (best == null || Ver.newer(cand.latest, best.latest)) best = cand
+                    }
+                    out += best ?: lastErr ?: err(full, name, pkg, "Brak wydań z tagiem $prefix…").first()
+                }
+            } catch (e: HttpException) {
+                out += err(full, name, pkg, if (e.code == 404) "Brak wydań (Releases)" else e.message)
+            }
         }
+        return out
+    }
+
+    private fun fromRelease(full: String, name: String, pkg: String, rel: JSONObject, assetRe: Regex?, prefix: String): AppItem {
         val tag = rel.optString("tag_name")
         val assets = rel.optJSONArray("assets") ?: JSONArray()
         var apk: JSONObject? = null
@@ -136,8 +173,8 @@ object Catalog {
             if (assetRe == null || assetRe.matches(n)) { apk = a; break }
         }
         val notes = rel.optString("body").trim()
-        if (apk == null) return AppItem(full, name, pkg, Ver.norm(tag) ?: tag, null, null, null, notes, "Release $tag bez pliku APK")
-        val version = Ver.norm(tag) ?: Ver.norm(apk.optString("name")) ?: tag
+        val version = Ver.norm(tag.removePrefix(prefix)) ?: apk?.let { Ver.norm(it.optString("name")) } ?: tag
+        if (apk == null) return AppItem(full, name, pkg, version, null, null, null, notes, "Wydanie $tag bez pliku APK")
         return AppItem(
             repo = full, name = name, pkg = pkg, latest = version,
             apkName = apk.optString("name"),

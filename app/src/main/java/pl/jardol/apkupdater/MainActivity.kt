@@ -154,10 +154,10 @@ class MainActivity : Activity() {
         for (item in items) {
             val row = buildRow(item)
             list.addView(row, lp(-1, -2, top = dp(8)))
-            if (item.repo == focusedRepo) {
-                restore = row.findViewWithTag<View>(item.repo)?.let { first ->
+            if (item.key == focusedRepo) {
+                restore = row.findViewWithTag<View>(item.key)?.let { first ->
                     // ten sam przycisk co przed odświeżeniem, jeśli nadal jest
-                    findRole(row, item.repo, focusedRole) ?: first
+                    findRole(row, item.key, focusedRole) ?: first
                 }
             }
         }
@@ -192,18 +192,18 @@ class MainActivity : Activity() {
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
         }
-        val msg = rowMsg[item.repo]
+        val msg = rowMsg[item.key]
         when {
             msg != null -> { st.text = msg; st.setTextColor(0xFFFFD54F.toInt()) }
             item.error != null -> { st.text = item.error; st.setTextColor(0xFFEF9A9A.toInt()) }
             item.hasUpdate -> { st.text = firstLine(item.notes) ?: "Nowa wersja"; st.setTextColor(0xFFA5D6A7.toInt()) }
             else -> st.text = firstLine(item.notes) ?: ""
         }
-        rowStatus[item.repo] = st
+        rowStatus[item.key] = st
         info.addView(st)
         row.addView(info, lp(0, -2, 1f))
 
-        val isBusy = item.repo in busy
+        val isBusy = item.key in busy
         val action = when {
             !item.canInstall -> null
             !item.isInstalled -> "Zainstaluj"
@@ -213,29 +213,29 @@ class MainActivity : Activity() {
         if (action != null) {
             row.addView(button(if (isBusy) "…" else action) { install(item) }.apply {
                 isEnabled = !isBusy
-                tag = item.repo; setTag(R.id.role, "install")
+                tag = item.key; setTag(R.id.role, "install")
             }, lp(-2, -2, left = dp(8)))
         }
         if (item.notes.isNotEmpty()) {
             row.addView(button("Zmiany") { showNotes(item) }.apply {
-                tag = item.repo; setTag(R.id.role, "notes")
+                tag = item.key; setTag(R.id.role, "notes")
             }, lp(-2, -2, left = dp(8)))
         }
         if (item.pkg.isNotEmpty()) {
             val auto = prefs.isAuto(item.pkg)
             row.addView(button(if (auto) "Auto: wł" else "Auto: wył") {
                 prefs.setAuto(item.pkg, !prefs.isAuto(item.pkg)); render()
-            }.apply { tag = item.repo; setTag(R.id.role, "auto") }, lp(-2, -2, left = dp(8)))
+            }.apply { tag = item.key; setTag(R.id.role, "auto") }, lp(-2, -2, left = dp(8)))
         }
         if (item.isInstalled && !self && launchIntent(item.pkg) != null) {
             row.addView(button("Otwórz") {
                 launchIntent(item.pkg)?.let { startActivity(it) }
-            }.apply { tag = item.repo; setTag(R.id.role, "open") }, lp(-2, -2, left = dp(8)))
+            }.apply { tag = item.key; setTag(R.id.role, "open") }, lp(-2, -2, left = dp(8)))
         }
         if (row.childCount == 1) {
             // brak przycisków — wiersz musi być osiągalny pilotem, żeby dało się przewinąć
             row.isFocusable = true
-            row.tag = item.repo
+            row.tag = item.key
         }
         return row
     }
@@ -289,25 +289,25 @@ class MainActivity : Activity() {
             Installer.openInstallPermission(this)
             return
         }
-        busy.add(item.repo)
-        rowMsg[item.repo] = "Pobieranie…"
+        busy.add(item.key)
+        rowMsg[item.key] = "Pobieranie…"
         render()
         io.execute {
             try {
                 Installer.downloadAndInstall(this, item) { pct ->
                     main.post {
-                        rowMsg[item.repo] = "Pobieranie… $pct%"
-                        rowStatus[item.repo]?.text = rowMsg[item.repo]
+                        rowMsg[item.key] = "Pobieranie… $pct%"
+                        rowStatus[item.key]?.text = rowMsg[item.key]
                     }
                 }
                 main.post {
-                    rowMsg[item.repo] = "Instalowanie…"
-                    rowStatus[item.repo]?.text = rowMsg[item.repo]
+                    rowMsg[item.key] = "Instalowanie…"
+                    rowStatus[item.key]?.text = rowMsg[item.key]
                 }
             } catch (e: Exception) {
                 main.post {
-                    busy.remove(item.repo)
-                    rowMsg[item.repo] = "Błąd: ${e.message}"
+                    busy.remove(item.key)
+                    rowMsg[item.key] = "Błąd: ${e.message}"
                     render()
                 }
             }
@@ -315,7 +315,7 @@ class MainActivity : Activity() {
     }
 
     private fun onInstallResult(pkg: String, msg: String?) {
-        val repo = items.firstOrNull { it.pkg == pkg }?.repo ?: return
+        val repo = items.firstOrNull { it.pkg == pkg }?.key ?: return
         if (msg == null) {
             busy.remove(repo)
             rowMsg[repo] = "Zainstalowano ✓"
