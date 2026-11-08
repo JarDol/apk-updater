@@ -1,0 +1,5 @@
+{
+  "name": "APK Updater",
+  "package": "pl.jardol.apkupdater",
+  "asset": "apk-updater-.*\\.apk"
+}
