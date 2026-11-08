@@ -17,9 +17,13 @@ data class AppItem(
     val apkApiUrl: String?,         // URL assetu w API (prywatne repo)
     val notes: String,
     val error: String?,
+    /** Apka ma własną aktualizację i własne ustawienie „Automatyczna aktualizacja” (updater.json: selfUpdate). */
+    val selfUpdate: Boolean = false,
     // uzupełniane lokalnie:
     val installed: String? = null,
     val installedCode: Long = -1,
+    /** Dla [selfUpdate]: ustawienie odczytane z apki (null = apka go nie udostępnia → jak „nie”). */
+    val appAuto: Boolean? = null,
 ) {
     /** Unikalny klucz wiersza (w jednym repo może być kilka apek). */
     val key get() = "$repo#$pkg#$name"
@@ -31,6 +35,7 @@ data class AppItem(
         .put("repo", repo).put("name", name).put("pkg", pkg)
         .put("latest", latest).put("apkName", apkName).put("apkUrl", apkUrl)
         .put("apkApiUrl", apkApiUrl).put("notes", notes).put("error", error)
+        .put("selfUpdate", selfUpdate)
 
     companion object {
         fun fromJson(o: JSONObject) = AppItem(
@@ -38,6 +43,7 @@ data class AppItem(
             latest = o.optStringOrNull("latest"), apkName = o.optStringOrNull("apkName"),
             apkUrl = o.optStringOrNull("apkUrl"), apkApiUrl = o.optStringOrNull("apkApiUrl"),
             notes = o.optString("notes"), error = o.optStringOrNull("error"),
+            selfUpdate = o.optBoolean("selfUpdate"),
         )
     }
 }
@@ -97,9 +103,13 @@ object Catalog {
             try {
                 @Suppress("DEPRECATION")
                 val pi = pm.getPackageInfo(item.pkg, 0)
-                item.copy(installed = pi.versionName ?: "?", installedCode = PackageInfoCompat.getLongVersionCode(pi))
+                item.copy(
+                    installed = pi.versionName ?: "?",
+                    installedCode = PackageInfoCompat.getLongVersionCode(pi),
+                    appAuto = if (item.selfUpdate) AppAuto.query(ctx, item.pkg) else null,
+                )
             } catch (_: PackageManager.NameNotFoundException) {
-                item.copy(installed = null, installedCode = -1)
+                item.copy(installed = null, installedCode = -1, appAuto = null)
             }
         }
     }
@@ -109,7 +119,7 @@ object Catalog {
 
     /**
      * Apki z jednego repo. updater.json może opisywać jedną apkę albo kilka (monorepo):
-     *   {"name": "...", "package": "...", "asset": "regex", "tag": "prefiks-tagu-"}
+     *   {"name": "...", "package": "...", "asset": "regex", "tag": "prefiks-tagu-", "selfUpdate": true}
      *   {"apps": [ {...}, {...} ]}
      * Z "tag": najwyższa wersja spośród wydań o tagu zaczynającym się od prefiksu.
      * Bez "tag": wydanie oznaczone jako najnowsze (latest).
@@ -128,6 +138,8 @@ object Catalog {
         var releases: JSONArray? = null   // lista wydań, pobierana raz na repo
         val out = ArrayList<AppItem>()
         for (d in defs) {
+            val start = out.size
+            val self = d.optBoolean("selfUpdate")
             val name = d.optString("name").ifEmpty { repoName }
             val pkg = d.optString("package")
             if (pkg.isEmpty()) { out += err(full, name, "", "updater.json bez pola \"package\""); continue }
@@ -158,6 +170,7 @@ object Catalog {
             } catch (e: HttpException) {
                 out += err(full, name, pkg, if (e.code == 404) "Brak wydań (Releases)" else e.message)
             }
+            for (k in start until out.size) out[k] = out[k].copy(selfUpdate = self)
         }
         return out
     }

@@ -35,10 +35,23 @@ pokazuje zainstalowaną i najnowszą wersję, pobiera APK i instaluje. Aktualizu
 
 Ważne: każda wersja apki musi być podpisana **tym samym kluczem**, inaczej Android nie zainstaluje aktualizacji.
 
+## Apki z własną aktualizacją (`selfUpdate`)
+
+Jeśli apka sama umie się aktualizować i ma opcję „Automatyczna aktualizacja: tak/nie”, dodaj w `updater.json`
+`"selfUpdate": true`. Wtedy o automatycznej aktualizacji decyduje **ustawienie w apce**, nie przełącznik w APK Updaterze:
+
+- **tak** — APK Updater aktualizuje ją w tle (apka może też sama przy starcie),
+- **nie** — APK Updater nic nie robi sam i nie powiadamia; aktualizacja tylko ręcznie z poziomu apki.
+
+Apka udostępnia ustawienie przez provider `content://<pakiet>.updateinfo/settings` (kolumna `auto`: 1/0).
+Wzór: `UpdateInfoProvider.kt` w E2Stream (`JarDol/enigma2-epgscan`, katalog `e2stream/`). Gdy apka nie ma providera
+(starsza wersja), traktowane jest to jak „nie”.
+
 ## Działanie
 
 - Lista: repo konta `JarDol` z tematem `android-app` (konto i temat można zmienić w ustawieniach).
-- „Auto: wł” – apka aktualizowana automatycznie przy sprawdzaniu w tle (domyślnie tylko sam aktualizator).
+- „Auto: wł” – apka bez własnej aktualizacji aktualizowana automatycznie przy sprawdzaniu w tle
+  (domyślnie tylko sam aktualizator). Apki z `selfUpdate` – wg własnego ustawienia (wyżej).
 - Sprawdzanie w tle co 6 h (do zmiany w ustawieniach), powiadomienie o nowych wersjach.
 - Android 12+: aktualizacje apek zainstalowanych przez aktualizator idą bez pytania.
   Starsze systemy (np. Mi Box) zawsze pokażą systemowe okno „Zainstaluj”.

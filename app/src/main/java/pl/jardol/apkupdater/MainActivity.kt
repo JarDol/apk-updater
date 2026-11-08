@@ -186,7 +186,13 @@ class MainActivity : Activity() {
         info.addView(text(15f, 0xFFCFD8DC.toInt()).apply {
             val inst = item.installed?.let { "zainstalowana $it" } ?: "niezainstalowana"
             val avail = item.latest?.let { "dostępna $it" } ?: "—"
-            text = "$inst  ·  $avail  ·  ${item.repo}"
+            val mode = when {
+                !item.selfUpdate || !item.isInstalled -> ""
+                item.appAuto == true -> "  ·  auto: wg apki (tak)"
+                item.appAuto == false -> "  ·  auto: wg apki (nie)"
+                else -> "  ·  auto: nie (apka bez ustawienia)"
+            }
+            text = "$inst  ·  $avail$mode  ·  ${item.repo}"
         })
         val st = text(14f, 0xFF90A4AE.toInt()).apply {
             maxLines = 2
@@ -196,6 +202,10 @@ class MainActivity : Activity() {
         when {
             msg != null -> { st.text = msg; st.setTextColor(0xFFFFD54F.toInt()) }
             item.error != null -> { st.text = item.error; st.setTextColor(0xFFEF9A9A.toInt()) }
+            item.hasUpdate && item.selfUpdate && item.appAuto != true -> {
+                st.text = "Aktualizacja ręczna — z poziomu apki (Automatyczna aktualizacja: nie)"
+                st.setTextColor(0xFFFFCC80.toInt())
+            }
             item.hasUpdate -> { st.text = firstLine(item.notes) ?: "Nowa wersja"; st.setTextColor(0xFFA5D6A7.toInt()) }
             else -> st.text = firstLine(item.notes) ?: ""
         }
@@ -207,6 +217,7 @@ class MainActivity : Activity() {
         val action = when {
             !item.canInstall -> null
             !item.isInstalled -> "Zainstaluj"
+            item.hasUpdate && item.selfUpdate && item.appAuto != true -> null   // tylko z poziomu apki
             item.hasUpdate -> "Aktualizuj"
             else -> null
         }
@@ -221,7 +232,7 @@ class MainActivity : Activity() {
                 tag = item.key; setTag(R.id.role, "notes")
             }, lp(-2, -2, left = dp(8)))
         }
-        if (item.pkg.isNotEmpty()) {
+        if (item.pkg.isNotEmpty() && !item.selfUpdate) {
             val auto = prefs.isAuto(item.pkg)
             row.addView(button(if (auto) "Auto: wł" else "Auto: wył") {
                 prefs.setAuto(item.pkg, !prefs.isAuto(item.pkg)); render()

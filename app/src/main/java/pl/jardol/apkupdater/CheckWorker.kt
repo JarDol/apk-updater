@@ -4,7 +4,10 @@ import android.content.Context
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 
-/** Okresowe sprawdzanie w tle: apki z „Auto” aktualizuje, o pozostałych powiadamia. */
+/**
+ * Okresowe sprawdzanie w tle: apki z automatyczną aktualizacją aktualizuje, o pozostałych powiadamia.
+ * Apki z własną aktualizacją ustawioną na „nie” są pomijane (bez powiadomień).
+ */
 class CheckWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
 
     override fun doWork(): Result {
@@ -19,7 +22,8 @@ class CheckWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) 
         val manual = ArrayList<AppItem>()
         // Siebie aktualizujemy na końcu — instalacja nowej wersji kończy ten proces.
         for (item in updates.sortedBy { it.pkg == ctx.packageName }) {
-            if (p.isAuto(item.pkg) && Installer.canInstall(ctx)) {
+            if (item.selfUpdate && item.appAuto != true) continue   // apka ma ręczną aktualizację — z jej poziomu
+            if (AppAuto.enabled(p, item) && Installer.canInstall(ctx)) {
                 try {
                     Installer.downloadAndInstall(ctx, item) { }
                 } catch (_: Exception) {
