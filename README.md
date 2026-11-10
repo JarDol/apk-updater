@@ -54,6 +54,7 @@ Wzór: `UpdateInfoProvider.kt` w E2Stream (`JarDol/enigma2-epgscan`, katalog `e2
 - Sprawdzanie w tle i „Auto” trzymają się ścieżki, na której apka jest zainstalowana: wersja beta (`-beta.N`) śledzi betę, pozostałe – stable.
 - „Auto: wł” – apka bez własnej aktualizacji aktualizowana automatycznie przy sprawdzaniu w tle
   (domyślnie tylko sam aktualizator). Apki z `selfUpdate` – wg własnego ustawienia (wyżej).
+- Limit zapytań GitHub (60/h bez tokena): po jego wyczerpaniu lista zostaje z ostatnich danych, a ostrzeżenie pokazuje, za ile się odnowi; do tego czasu aplikacja nie odpytuje GitHuba. Token w ustawieniach podnosi limit do 5000/h.
 - Sprawdzanie w tle co 6 h (do zmiany w ustawieniach), powiadomienie o nowych wersjach.
 - Android 12+: aktualizacje apek zainstalowanych przez aktualizator idą bez pytania.
   Starsze systemy (np. Mi Box) zawsze pokażą systemowe okno „Zainstaluj”.

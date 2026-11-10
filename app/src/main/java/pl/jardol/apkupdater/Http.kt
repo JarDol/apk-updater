@@ -7,7 +7,10 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
-class HttpException(val code: Int, msg: String) : IOException(msg)
+open class HttpException(val code: Int, msg: String) : IOException(msg)
+
+/** Limit zapytań GitHub wyczerpany; [resetAt] — kiedy się odnowi (ms). */
+class RateLimitException(code: Int, msg: String, val resetAt: Long) : HttpException(code, msg)
 
 /**
  * GET z pamięcią podręczną ETag. Odpowiedź 304 z GitHuba nie zużywa limitu zapytań
@@ -42,11 +45,10 @@ object Http {
                 304 -> return body.readText()
                 else -> {
                     if ((code == 403 || code == 429) && c.getHeaderField("X-RateLimit-Remaining") == "0") {
-                        val reset = c.getHeaderField("X-RateLimit-Reset")?.toLongOrNull()
-                        val mins = reset?.let { ((it * 1000 - System.currentTimeMillis()) / 60000).coerceAtLeast(1) }
-                        throw HttpException(code, "Limit zapytań GitHub wyczerpany" +
-                            (mins?.let { " (odnowi się za ok. $it min)" } ?: "") +
-                            ". Dodaj token w ustawieniach.")
+                        val resetAt = c.getHeaderField("X-RateLimit-Reset")?.toLongOrNull()?.let { it * 1000 }
+                            ?: (System.currentTimeMillis() + 10 * 60000)
+                        Prefs(ctx).blockedUntil = resetAt
+                        throw RateLimitException(code, rateMsg(resetAt), resetAt)
                     }
                     throw HttpException(code, "HTTP $code: $url")
                 }
@@ -54,6 +56,11 @@ object Http {
         } finally {
             c.disconnect()
         }
+    }
+
+    fun rateMsg(resetAt: Long): String {
+        val mins = ((resetAt - System.currentTimeMillis()) / 60000 + 1).coerceAtLeast(1)
+        return "Limit zapytań GitHub wyczerpany (odnowi się za ok. $mins min). Pokazuję ostatnie dane. Dodaj token w ustawieniach."
     }
 
     private fun sha1(s: String): String =

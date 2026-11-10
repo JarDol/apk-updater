@@ -15,6 +15,8 @@ class CheckWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) 
         val p = Prefs(ctx)
         val items = try {
             Catalog.refresh(ctx)
+        } catch (_: RateLimitException) {
+            return Result.success()   // limit GitHub — następne sprawdzenie wg harmonogramu
         } catch (_: Exception) {
             return Result.retry()
         }

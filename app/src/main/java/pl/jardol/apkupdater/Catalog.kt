@@ -77,6 +77,8 @@ object Catalog {
     /** Pobiera świeżą listę z GitHuba (sieć — poza wątkiem UI). */
     fun refresh(ctx: Context): List<AppItem> {
         val p = Prefs(ctx)
+        val blocked = p.blockedUntil
+        if (blocked > System.currentTimeMillis()) throw RateLimitException(403, Http.rateMsg(blocked), blocked)
         val token = p.token
         val owner = p.owner
         val reposUrl = if (token.isNotEmpty())
@@ -95,21 +97,30 @@ object Catalog {
             if ((0 until topics.length()).none { topics.optString(it) == p.topic }) continue
             out.addAll(readRepo(ctx, full, r.optString("default_branch", "main"), r.optString("name"), token))
         }
+        // chwilowy błąd jednego repo nie kasuje ostatnich dobrych danych
+        val old = savedItems(p).associateBy { it.key + "|" + it.channel }
+        for (i in out.indices) {
+            val cur = out[i]
+            val prev = old[cur.key + "|" + cur.channel]
+            if (cur.apkUrl == null && cur.error != null && prev != null && prev.error == null) out[i] = prev
+        }
         out.sortWith(compareBy<AppItem>({ it.pkg != BuildConfigPkg.SELF }, { it.name.lowercase() }, { it.channel }))
         p.catalogJson = JSONArray().apply { out.forEach { put(it.toJson()) } }.toString()
         p.lastCheck = System.currentTimeMillis()
         return withInstalled(ctx, out)
     }
 
-    /** Ostatnio pobrana lista (bez sieci). */
-    fun cached(ctx: Context): List<AppItem> {
-        val s = Prefs(ctx).catalogJson
+    private fun savedItems(p: Prefs): List<AppItem> {
+        val s = p.catalogJson
         if (s.isEmpty()) return emptyList()
         return try {
             val a = JSONArray(s)
-            withInstalled(ctx, (0 until a.length()).map { AppItem.fromJson(a.getJSONObject(it)) })
+            (0 until a.length()).map { AppItem.fromJson(a.getJSONObject(it)) }
         } catch (_: Exception) { emptyList() }
     }
+
+    /** Ostatnio pobrana lista (bez sieci). */
+    fun cached(ctx: Context): List<AppItem> = withInstalled(ctx, savedItems(Prefs(ctx)))
 
     /** Uzupełnia zainstalowane wersje (lokalnie, szybkie). */
     fun withInstalled(ctx: Context, items: List<AppItem>): List<AppItem> {
@@ -147,6 +158,8 @@ object Catalog {
     private fun readRepo(ctx: Context, full: String, branch: String, repoName: String, token: String): List<AppItem> {
         val meta = try {
             JSONObject(Http.get(ctx, "https://raw.githubusercontent.com/$full/$branch/updater.json", token))
+        } catch (e: RateLimitException) {
+            throw e
         } catch (e: HttpException) {
             return bothChannels(err(full, repoName, "", if (e.code == 404) "Brak pliku updater.json w repo" else e.message))
         } catch (e: Exception) {
@@ -194,6 +207,8 @@ object Catalog {
                 val fallback = lastErr ?: err(full, name, pkg,
                     if (list.length() == 0) "Brak wydań (Releases)" else "Brak wydań z tagiem $prefix…")
                 out += bothChannels(bestStable ?: fallback, newest ?: fallback)
+            } catch (e: RateLimitException) {
+                throw e
             } catch (e: HttpException) {
                 out += bothChannels(err(full, name, pkg, if (e.code == 404) "Brak wydań (Releases)" else e.message))
             }

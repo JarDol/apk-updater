@@ -45,6 +45,8 @@ class MainActivity : Activity() {
     private val busy = HashSet<String>()
     private val rowStatus = HashMap<String, TextView>()
     private var loading = false
+    /** Ostrzeżenie po nieudanym odświeżeniu (np. limit GitHub); lista zostaje z ostatnich danych. */
+    private var warning: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -152,12 +154,13 @@ class MainActivity : Activity() {
         // zaznaczony ekran wyróżniony kropką
         stableBtn.text = if (screen == AppItem.STABLE) "● Stable" else "Stable"
         betaBtn.text = if (screen == AppItem.BETA) "● Beta" else "Beta"
-        status.text = when {
+        val base = when {
             loading -> "Sprawdzam repo ${prefs.owner} (temat: ${prefs.topic})…"
             last == 0L -> "Jeszcze nie sprawdzano"
             else -> "Sprawdzono: " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(last)) +
                 "  ·  ekran: $channel  ·  apek: ${shown.size}" + (if (upd > 0) "  ·  aktualizacji: $upd" else "")
         }
+        status.text = if (warning != null && !loading) "$base\n$warning" else base
     }
 
     private fun render() {
@@ -309,10 +312,12 @@ class MainActivity : Activity() {
             main.post {
                 loading = false
                 refreshBtn.isEnabled = true
-                res.onSuccess { items = it }
-                res.onFailure { toast("Błąd: ${it.message}") }
+                res.onSuccess { items = it; warning = null }
+                res.onFailure {
+                    warning = if (it is RateLimitException) it.message else "Błąd: ${it.message}"
+                    if (it !is RateLimitException) toast("Błąd: ${it.message}")
+                }
                 render()
-                res.onFailure { status.text = "Błąd: ${it.message}" }
             }
         }
     }
@@ -396,7 +401,7 @@ class MainActivity : Activity() {
                 prefs.token = token.text.toString()
                 prefs.intervalHours = hours.text.toString().toIntOrNull() ?: 6
                 App.schedule(this)
-                if (changed) { items = emptyList(); refresh() } else render()
+                if (changed) { items = emptyList(); warning = null; refresh() } else render()
             }
             .setNegativeButton("Anuluj", null)
             .show()

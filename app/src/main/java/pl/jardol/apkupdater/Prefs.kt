@@ -25,7 +25,15 @@ class Prefs(ctx: Context) {
     /** Opcjonalny token GitHub (prywatne repo / wyższy limit zapytań). */
     var token: String
         get() = sp.getString("token", "") ?: ""
-        set(v) = sp.edit().putString("token", v.trim()).apply()
+        set(v) {
+            val changed = v.trim() != token
+            sp.edit().putString("token", v.trim()).apply { if (changed) remove("blockedUntil") }.apply()
+        }
+
+    /** Do kiedy GitHub blokuje zapytania (limit); do tego czasu nie odpytujemy sieci. */
+    var blockedUntil: Long
+        get() = sp.getLong("blockedUntil", 0)
+        set(v) = sp.edit().putLong("blockedUntil", v).apply()
 
     /** Co ile godzin sprawdzać w tle (0 = wyłączone). */
     var intervalHours: Int
