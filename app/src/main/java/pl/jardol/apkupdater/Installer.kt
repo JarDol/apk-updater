@@ -42,8 +42,18 @@ object Installer {
     /** Pobiera, sprawdza i przekazuje APK do instalacji. Wynik przychodzi do [InstallReceiver]. */
     fun downloadAndInstall(ctx: Context, item: AppItem, progress: (Int) -> Unit) {
         if (!canInstall(ctx)) throw NeedInstallPermission()
-        val apk = download(ctx, item, progress)
-        verify(ctx, apk, item.pkg)
+        // Jedno pobieranie naraz (klik + zadanie w tle nie mogą pisać do tego samego pliku).
+        val apk = synchronized(this) {
+            var last: IOException? = null
+            var ok: File? = null
+            for (attempt in 1..2) {
+                try {
+                    ok = download(ctx, item, progress).also { verify(ctx, it, item.pkg) }
+                    break
+                } catch (e: IOException) { last = e }
+            }
+            ok ?: throw last!!
+        }
         install(ctx, apk, item)
     }
 
@@ -51,7 +61,7 @@ object Installer {
         val token = Prefs(ctx).token
         val dir = File(ctx.cacheDir, "apk").apply { mkdirs() }
         val out = File(dir, item.apkName ?: "${item.pkg}.apk")
-        val tmp = File(dir, out.name + ".part")
+        val tmp = File(dir, out.name + ".part").apply { delete() }
 
         // Z tokenem: przez API (działa też dla prywatnych repo). Bez: zwykły link.
         val useApi = token.isNotEmpty() && item.apkApiUrl != null
@@ -100,6 +110,10 @@ object Installer {
                         }
                     }
                 }
+            }
+            if (total > 0 && tmp.length() != total) {
+                tmp.delete()
+                throw IOException("Pobrano ${tmp.length()} z $total B — spróbuj ponownie")
             }
         } finally {
             c.disconnect()
