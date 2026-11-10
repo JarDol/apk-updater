@@ -35,6 +35,9 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var list: LinearLayout
     private lateinit var refreshBtn: Button
+    private lateinit var stableBtn: Button
+    private lateinit var betaBtn: Button
+    private var screen = AppItem.STABLE
 
     private var items: List<AppItem> = emptyList()
     /** Komunikat przy wierszu (postęp, błąd) — przeżywa ponowne rysowanie listy. */
@@ -46,6 +49,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
+        screen = prefs.screen
         setContentView(buildLayout())
         items = Catalog.cached(this)
         render()
@@ -110,8 +114,12 @@ class MainActivity : Activity() {
         }
         header.addView(text(24f, Color.WHITE, true).apply { text = getString(R.string.app_name) },
             lp(0, -2, 1f))
+        stableBtn = button("Stable") { showScreen(AppItem.STABLE) }
+        betaBtn = button("Beta") { showScreen(AppItem.BETA) }
+        header.addView(stableBtn, lp(-2, -2))
+        header.addView(betaBtn, lp(-2, -2, left = dp(8)))
         refreshBtn = button("Odśwież") { refresh() }
-        header.addView(refreshBtn, lp(-2, -2))
+        header.addView(refreshBtn, lp(-2, -2, left = dp(24)))
         header.addView(button("Ustawienia") { settings() }, lp(-2, -2, left = dp(8)))
         root.addView(header)
 
@@ -127,15 +135,28 @@ class MainActivity : Activity() {
         return root
     }
 
+    private fun visibleItems() = Catalog.forChannel(items, screen)
+
+    private fun showScreen(s: String) {
+        if (s == screen) return
+        screen = s
+        prefs.screen = s
+        render()
+    }
+
     private fun setStatus() {
         val last = prefs.lastCheck
-        val upd = items.count { it.hasUpdate }
-        val channel = if (prefs.betaChannel) "beta" else "main"
+        val shown = visibleItems()
+        val upd = shown.count { it.hasUpdate }
+        val channel = if (screen == AppItem.BETA) "beta" else "stable"
+        // zaznaczony ekran wyróżniony kropką
+        stableBtn.text = if (screen == AppItem.STABLE) "● Stable" else "Stable"
+        betaBtn.text = if (screen == AppItem.BETA) "● Beta" else "Beta"
         status.text = when {
-            loading -> "Sprawdzam repo ${prefs.owner} (temat: ${prefs.topic}, kanał: $channel)…"
+            loading -> "Sprawdzam repo ${prefs.owner} (temat: ${prefs.topic})…"
             last == 0L -> "Jeszcze nie sprawdzano"
             else -> "Sprawdzono: " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(last)) +
-                "  ·  kanał: $channel  ·  apek: ${items.size}" + (if (upd > 0) "  ·  aktualizacji: $upd" else "")
+                "  ·  ekran: $channel  ·  apek: ${shown.size}" + (if (upd > 0) "  ·  aktualizacji: $upd" else "")
         }
     }
 
@@ -145,14 +166,15 @@ class MainActivity : Activity() {
         list.removeAllViews()
         rowStatus.clear()
         setStatus()
-        if (items.isEmpty() && !loading) {
+        val shown = visibleItems()
+        if (shown.isEmpty() && !loading) {
             list.addView(text(16f, 0xFFB0BEC5.toInt()).apply {
                 text = "Brak apek. Oznacz repo tematem „${prefs.topic}”, dodaj do niego updater.json " +
                     "i wydaj Release z plikiem APK."
             })
         }
         var restore: View? = null
-        for (item in items) {
+        for (item in shown) {
             val row = buildRow(item)
             list.addView(row, lp(-1, -2, top = dp(8)))
             if (item.key == focusedRepo) {
@@ -354,16 +376,6 @@ class MainActivity : Activity() {
         }
         val owner = field("Konto GitHub", prefs.owner, InputType.TYPE_CLASS_TEXT)
         val topic = field("Temat (topic) repo z apkami", prefs.topic, InputType.TYPE_CLASS_TEXT)
-        box.addView(text(14f, 0xFFB0BEC5.toInt()).apply { text = "Kanał wydań" }, lp(-1, -2, top = dp(10)))
-        val stableId = View.generateViewId()
-        val betaId = View.generateViewId()
-        val channel = android.widget.RadioGroup(this).apply {
-            orientation = android.widget.RadioGroup.HORIZONTAL
-            addView(android.widget.RadioButton(this@MainActivity).apply { id = stableId; text = "Main (stable)" })
-            addView(android.widget.RadioButton(this@MainActivity).apply { id = betaId; text = "Beta" })
-            check(if (prefs.betaChannel) betaId else stableId)
-        }
-        box.addView(channel, lp(-1, -2))
         val token = field("Token GitHub (opcjonalnie — prywatne repo, wyższy limit)", prefs.token,
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         val hours = field("Sprawdzaj w tle co ile godzin (0 = nie sprawdzaj)", prefs.intervalHours.toString(),
@@ -378,12 +390,10 @@ class MainActivity : Activity() {
             .setPositiveButton("Zapisz") { _, _ ->
                 val changed = owner.text.toString().trim() != prefs.owner ||
                     topic.text.toString().trim().lowercase() != prefs.topic ||
-                    token.text.toString().trim() != prefs.token ||
-                    (channel.checkedRadioButtonId == betaId) != prefs.betaChannel
+                    token.text.toString().trim() != prefs.token
                 prefs.owner = owner.text.toString()
                 prefs.topic = topic.text.toString()
                 prefs.token = token.text.toString()
-                prefs.betaChannel = channel.checkedRadioButtonId == betaId
                 prefs.intervalHours = hours.text.toString().toIntOrNull() ?: 6
                 App.schedule(this)
                 if (changed) { items = emptyList(); refresh() } else render()

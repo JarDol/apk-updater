@@ -50,7 +50,8 @@ Wzór: `UpdateInfoProvider.kt` w E2Stream (`JarDol/enigma2-epgscan`, katalog `e2
 ## Działanie
 
 - Lista: repo konta `JarDol` z tematem `android-app` (konto i temat można zmienić w ustawieniach).
-- Kanał wydań: `Main (stable)` (domyślny) pomija prerelease; `Beta` preferuje najnowszy prerelease repo i wraca do stable, jeśli beta nie istnieje. Zmiana kanału pozwala też wrócić z bety do stable.
+- Dwa ekrany (przyciski `Stable` i `Beta` u góry): `Stable` pokazuje tylko wydania bez prerelease, `Beta` – najnowszą wersję apki (prerelease albo stable, co nowsze). Każdą apkę aktualizujesz osobno, więc beta dla jednej nie wpływa na pozostałe. „Aktualizuj” pojawia się tylko, gdy dostępna wersja jest nowsza od zainstalowanej.
+- Sprawdzanie w tle i „Auto” trzymają się ścieżki, na której apka jest zainstalowana: wersja beta (`-beta.N`) śledzi betę, pozostałe – stable.
 - „Auto: wł” – apka bez własnej aktualizacji aktualizowana automatycznie przy sprawdzaniu w tle
   (domyślnie tylko sam aktualizator). Apki z `selfUpdate` – wg własnego ustawienia (wyżej).
 - Sprawdzanie w tle co 6 h (do zmiany w ustawieniach), powiadomienie o nowych wersjach.

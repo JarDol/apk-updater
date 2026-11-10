@@ -18,7 +18,7 @@ class CheckWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) 
         } catch (_: Exception) {
             return Result.retry()
         }
-        val updates = items.filter { it.hasUpdate }
+        val updates = Catalog.tracked(items).filter { it.hasUpdate }
         val manual = ArrayList<AppItem>()
         // Siebie aktualizujemy na końcu — instalacja nowej wersji kończy ten proces.
         for (item in updates.sortedBy { it.pkg == ctx.packageName }) {

@@ -25,21 +25,25 @@ data class AppItem(
     val installedCode: Long = -1,
     /** Dla [selfUpdate]: ustawienie odczytane z apki (null = apka go nie udostępnia → jak „nie”). */
     val appAuto: Boolean? = null,
+    /** Ekran, na którym wpis jest pokazywany: [STABLE] albo [BETA] (najnowsza wersja, także beta). */
+    val channel: String = STABLE,
 ) {
-    /** Unikalny klucz wiersza (w jednym repo może być kilka apek). */
+    /** Unikalny klucz wiersza (w jednym repo może być kilka apek); wspólny dla obu ekranów. */
     val key get() = "$repo#$pkg#$name"
     val isInstalled get() = installed != null
-    val hasUpdate get() = isInstalled && apkUrl != null &&
-        (Ver.newer(latest, installed) || (prerelease != (installed?.contains('-') == true) && latest != installed))
+    val hasUpdate get() = isInstalled && apkUrl != null && Ver.newer(latest, installed)
     val canInstall get() = pkg.isNotEmpty() && apkUrl != null
 
     fun toJson(): JSONObject = JSONObject()
         .put("repo", repo).put("name", name).put("pkg", pkg)
         .put("latest", latest).put("apkName", apkName).put("apkUrl", apkUrl)
         .put("apkApiUrl", apkApiUrl).put("notes", notes).put("error", error).put("prerelease", prerelease)
-        .put("selfUpdate", selfUpdate)
+        .put("selfUpdate", selfUpdate).put("channel", channel)
 
     companion object {
+        const val STABLE = "stable"
+        const val BETA = "beta"
+
         fun fromJson(o: JSONObject) = AppItem(
             repo = o.getString("repo"), name = o.optString("name"), pkg = o.optString("pkg"),
             latest = o.optStringOrNull("latest"), apkName = o.optStringOrNull("apkName"),
@@ -47,6 +51,7 @@ data class AppItem(
             notes = o.optString("notes"), error = o.optStringOrNull("error"),
             prerelease = o.optBoolean("prerelease"),
             selfUpdate = o.optBoolean("selfUpdate"),
+            channel = o.optString("channel", STABLE),
         )
     }
 }
@@ -57,9 +62,17 @@ fun JSONObject.optStringOrNull(k: String): String? =
 /**
  * Lista apek: wszystkie repo konta [Prefs.owner] z tematem [Prefs.topic].
  * W każdym repo plik updater.json:  {"name": "...", "package": "...", "asset": "regex (opcjonalnie)"}
- * APK brane z najnowszego GitHub Release zgodnie z wybranym kanałem stable/beta.
+ * Dla każdej apki powstają dwa wpisy: stable (najnowsze wydanie bez prerelease) i beta
+ * (najnowsze wydanie w ogóle — prerelease albo stable, zależnie od tego, co nowsze).
  */
 object Catalog {
+
+    fun forChannel(items: List<AppItem>, channel: String) = items.filter { it.channel == channel }
+
+    /** Do pracy w tle: apka zainstalowana jako beta śledzi betę, pozostałe — stable. */
+    fun tracked(items: List<AppItem>) = items.filter {
+        it.channel == if (it.installed?.contains('-') == true) AppItem.BETA else AppItem.STABLE
+    }
 
     /** Pobiera świeżą listę z GitHuba (sieć — poza wątkiem UI). */
     fun refresh(ctx: Context): List<AppItem> {
@@ -80,9 +93,9 @@ object Catalog {
             if (!full.substringBefore('/').equals(owner, ignoreCase = true)) continue
             val topics = r.optJSONArray("topics") ?: continue
             if ((0 until topics.length()).none { topics.optString(it) == p.topic }) continue
-            out.addAll(readRepo(ctx, full, r.optString("default_branch", "main"), r.optString("name"), token, p.betaChannel))
+            out.addAll(readRepo(ctx, full, r.optString("default_branch", "main"), r.optString("name"), token))
         }
-        out.sortWith(compareBy<AppItem>({ it.pkg != BuildConfigPkg.SELF }, { it.name.lowercase() }))
+        out.sortWith(compareBy<AppItem>({ it.pkg != BuildConfigPkg.SELF }, { it.name.lowercase() }, { it.channel }))
         p.catalogJson = JSONArray().apply { out.forEach { put(it.toJson()) } }.toString()
         p.lastCheck = System.currentTimeMillis()
         return withInstalled(ctx, out)
@@ -118,22 +131,26 @@ object Catalog {
     }
 
     private fun err(full: String, name: String, pkg: String, msg: String?) =
-        listOf(AppItem(full, name, pkg, null, null, null, null, "", msg))
+        AppItem(full, name, pkg, null, null, null, null, "", msg)
+
+    private fun bothChannels(item: AppItem, beta: AppItem = item) =
+        listOf(item.copy(channel = AppItem.STABLE), beta.copy(channel = AppItem.BETA))
 
     /**
      * Apki z jednego repo. updater.json może opisywać jedną apkę albo kilka (monorepo):
      *   {"name": "...", "package": "...", "asset": "regex", "tag": "prefiks-tagu-", "selfUpdate": true}
      *   {"apps": [ {...}, {...} ]}
      * Z "tag": najwyższa wersja spośród wydań o tagu zaczynającym się od prefiksu.
-     * Bez "tag": wydanie oznaczone jako najnowsze (latest).
+     * Bez "tag": najnowsze (wg daty) wydanie danego rodzaju.
+     * Dla każdej apki zwraca wpis stable i wpis beta.
      */
-    private fun readRepo(ctx: Context, full: String, branch: String, repoName: String, token: String, betaChannel: Boolean): List<AppItem> {
+    private fun readRepo(ctx: Context, full: String, branch: String, repoName: String, token: String): List<AppItem> {
         val meta = try {
             JSONObject(Http.get(ctx, "https://raw.githubusercontent.com/$full/$branch/updater.json", token))
         } catch (e: HttpException) {
-            return err(full, repoName, "", if (e.code == 404) "Brak pliku updater.json w repo" else e.message)
+            return bothChannels(err(full, repoName, "", if (e.code == 404) "Brak pliku updater.json w repo" else e.message))
         } catch (e: Exception) {
-            return err(full, repoName, "", "updater.json: ${e.message}")
+            return bothChannels(err(full, repoName, "", "updater.json: ${e.message}"))
         }
         val defs = meta.optJSONArray("apps")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) } }
             ?: listOf(meta)
@@ -145,39 +162,40 @@ object Catalog {
             val self = d.optBoolean("selfUpdate")
             val name = d.optString("name").ifEmpty { repoName }
             val pkg = d.optString("package")
-            if (pkg.isEmpty()) { out += err(full, name, "", "updater.json bez pola \"package\""); continue }
+            if (pkg.isEmpty()) { out += bothChannels(err(full, name, "", "updater.json bez pola \"package\"")); continue }
             val assetRe = d.optString("asset").takeIf { it.isNotEmpty() }?.let {
                 try { Regex(it) } catch (_: Exception) { null }
             }
             val prefix = d.optString("tag")
             try {
-                if (prefix.isEmpty() && !betaChannel) {
-                    val rel = JSONObject(Http.get(ctx, "https://api.github.com/repos/$full/releases/latest", token))
-                    out += fromRelease(full, name, pkg, rel, assetRe, "")
-                } else {
-                    val list = releases
-                        ?: JSONArray(Http.get(ctx, "https://api.github.com/repos/$full/releases?per_page=100", token))
-                            .also { releases = it }
-                    var bestStable: AppItem? = null
-                    var bestBeta: AppItem? = null
-                    var lastErr: AppItem? = null
-                    for (i in 0 until list.length()) {
-                        val rel = list.getJSONObject(i)
-                        if (rel.optBoolean("draft")) continue
-                        val isBeta = rel.optBoolean("prerelease")
-                        if (isBeta && !betaChannel) continue
-                        if (!rel.optString("tag_name").startsWith(prefix)) continue
-                        val cand = fromRelease(full, name, pkg, rel, assetRe, prefix)
-                        if (cand.apkUrl == null) { if (lastErr == null) lastErr = cand; continue }
-                        if (isBeta) {
-                            if (bestBeta == null || Ver.newer(cand.latest, bestBeta.latest)) bestBeta = cand
-                        } else if (bestStable == null || Ver.newer(cand.latest, bestStable.latest)) bestStable = cand
-                    }
-                    out += (if (betaChannel) bestBeta ?: bestStable else bestStable)
-                        ?: lastErr ?: err(full, name, pkg, "Brak wydań z tagiem $prefix…").first()
+                val list = releases
+                    ?: JSONArray(Http.get(ctx, "https://api.github.com/repos/$full/releases?per_page=100", token))
+                        .also { releases = it }
+                var bestStable: AppItem? = null
+                var bestBeta: AppItem? = null
+                var lastErr: AppItem? = null
+                for (i in 0 until list.length()) {
+                    val rel = list.getJSONObject(i)
+                    if (rel.optBoolean("draft")) continue
+                    if (!rel.optString("tag_name").startsWith(prefix)) continue
+                    val cand = fromRelease(full, name, pkg, rel, assetRe, prefix)
+                    if (cand.apkUrl == null) { if (lastErr == null) lastErr = cand; continue }
+                    // bez prefiksu wygrywa pierwsze (najnowsze wg daty), z prefiksem — najwyższa wersja
+                    fun better(cur: AppItem?) = cur == null || (prefix.isNotEmpty() && Ver.newer(cand.latest, cur.latest))
+                    if (rel.optBoolean("prerelease")) { if (better(bestBeta)) bestBeta = cand }
+                    else if (better(bestStable)) bestStable = cand
                 }
+                val newest = when {
+                    bestBeta == null -> bestStable
+                    bestStable == null -> bestBeta
+                    Ver.newer(bestStable.latest, bestBeta.latest) -> bestStable
+                    else -> bestBeta
+                }
+                val fallback = lastErr ?: err(full, name, pkg,
+                    if (list.length() == 0) "Brak wydań (Releases)" else "Brak wydań z tagiem $prefix…")
+                out += bothChannels(bestStable ?: fallback, newest ?: fallback)
             } catch (e: HttpException) {
-                out += err(full, name, pkg, if (e.code == 404) "Brak wydań (Releases)" else e.message)
+                out += bothChannels(err(full, name, pkg, if (e.code == 404) "Brak wydań (Releases)" else e.message))
             }
             for (k in start until out.size) out[k] = out[k].copy(selfUpdate = self)
         }
