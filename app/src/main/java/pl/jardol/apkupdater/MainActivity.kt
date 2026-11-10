@@ -130,11 +130,12 @@ class MainActivity : Activity() {
     private fun setStatus() {
         val last = prefs.lastCheck
         val upd = items.count { it.hasUpdate }
+        val channel = if (prefs.betaChannel) "beta" else "main"
         status.text = when {
-            loading -> "Sprawdzam repo ${prefs.owner} (temat: ${prefs.topic})…"
+            loading -> "Sprawdzam repo ${prefs.owner} (temat: ${prefs.topic}, kanał: $channel)…"
             last == 0L -> "Jeszcze nie sprawdzano"
             else -> "Sprawdzono: " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(last)) +
-                "  ·  apek: ${items.size}" + (if (upd > 0) "  ·  aktualizacji: $upd" else "")
+                "  ·  kanał: $channel  ·  apek: ${items.size}" + (if (upd > 0) "  ·  aktualizacji: $upd" else "")
         }
     }
 
@@ -185,7 +186,7 @@ class MainActivity : Activity() {
         })
         info.addView(text(15f, 0xFFCFD8DC.toInt()).apply {
             val inst = item.installed?.let { "zainstalowana $it" } ?: "niezainstalowana"
-            val avail = item.latest?.let { "dostępna $it" } ?: "—"
+            val avail = item.latest?.let { "dostępna $it${if (item.prerelease) "  [BETA]" else ""}" } ?: "—"
             val mode = when {
                 !item.selfUpdate || !item.isInstalled -> ""
                 item.appAuto == true -> "  ·  auto: wg apki (tak)"
@@ -353,6 +354,16 @@ class MainActivity : Activity() {
         }
         val owner = field("Konto GitHub", prefs.owner, InputType.TYPE_CLASS_TEXT)
         val topic = field("Temat (topic) repo z apkami", prefs.topic, InputType.TYPE_CLASS_TEXT)
+        box.addView(text(14f, 0xFFB0BEC5.toInt()).apply { text = "Kanał wydań" }, lp(-1, -2, top = dp(10)))
+        val stableId = View.generateViewId()
+        val betaId = View.generateViewId()
+        val channel = android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.HORIZONTAL
+            addView(android.widget.RadioButton(this@MainActivity).apply { id = stableId; text = "Main (stable)" })
+            addView(android.widget.RadioButton(this@MainActivity).apply { id = betaId; text = "Beta" })
+            check(if (prefs.betaChannel) betaId else stableId)
+        }
+        box.addView(channel, lp(-1, -2))
         val token = field("Token GitHub (opcjonalnie — prywatne repo, wyższy limit)", prefs.token,
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         val hours = field("Sprawdzaj w tle co ile godzin (0 = nie sprawdzaj)", prefs.intervalHours.toString(),
@@ -367,10 +378,12 @@ class MainActivity : Activity() {
             .setPositiveButton("Zapisz") { _, _ ->
                 val changed = owner.text.toString().trim() != prefs.owner ||
                     topic.text.toString().trim().lowercase() != prefs.topic ||
-                    token.text.toString().trim() != prefs.token
+                    token.text.toString().trim() != prefs.token ||
+                    (channel.checkedRadioButtonId == betaId) != prefs.betaChannel
                 prefs.owner = owner.text.toString()
                 prefs.topic = topic.text.toString()
                 prefs.token = token.text.toString()
+                prefs.betaChannel = channel.checkedRadioButtonId == betaId
                 prefs.intervalHours = hours.text.toString().toIntOrNull() ?: 6
                 App.schedule(this)
                 if (changed) { items = emptyList(); refresh() } else render()

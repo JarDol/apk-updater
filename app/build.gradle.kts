@@ -11,8 +11,8 @@ android {
         applicationId = "pl.jardol.apkupdater"
         minSdk = 21
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.2.0"
+        versionCode = 4
+        versionName = "0.3.0"
     }
 
     // Stały klucz w repo => każda kolejna wersja instaluje się jako aktualizacja.

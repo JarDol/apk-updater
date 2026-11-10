@@ -17,6 +17,11 @@ class Prefs(ctx: Context) {
         get() = sp.getString("topic", null)?.takeIf { it.isNotBlank() } ?: "android-app"
         set(v) = sp.edit().putString("topic", v.trim().lowercase()).apply()
 
+    /** Kanał wydań: main/stable domyślnie; beta wybiera prerelease, gdy repo go ma. */
+    var betaChannel: Boolean
+        get() = sp.getBoolean("betaChannel", false)
+        set(v) = sp.edit().putBoolean("betaChannel", v).apply()
+
     /** Opcjonalny token GitHub (prywatne repo / wyższy limit zapytań). */
     var token: String
         get() = sp.getString("token", "") ?: ""

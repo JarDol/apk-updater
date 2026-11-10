@@ -17,6 +17,7 @@ data class AppItem(
     val apkApiUrl: String?,         // URL assetu w API (prywatne repo)
     val notes: String,
     val error: String?,
+    val prerelease: Boolean = false,
     /** Apka ma własną aktualizację i własne ustawienie „Automatyczna aktualizacja” (updater.json: selfUpdate). */
     val selfUpdate: Boolean = false,
     // uzupełniane lokalnie:
@@ -28,13 +29,14 @@ data class AppItem(
     /** Unikalny klucz wiersza (w jednym repo może być kilka apek). */
     val key get() = "$repo#$pkg#$name"
     val isInstalled get() = installed != null
-    val hasUpdate get() = isInstalled && apkUrl != null && Ver.newer(latest, installed)
+    val hasUpdate get() = isInstalled && apkUrl != null &&
+        (Ver.newer(latest, installed) || (prerelease != (installed?.contains('-') == true) && latest != installed))
     val canInstall get() = pkg.isNotEmpty() && apkUrl != null
 
     fun toJson(): JSONObject = JSONObject()
         .put("repo", repo).put("name", name).put("pkg", pkg)
         .put("latest", latest).put("apkName", apkName).put("apkUrl", apkUrl)
-        .put("apkApiUrl", apkApiUrl).put("notes", notes).put("error", error)
+        .put("apkApiUrl", apkApiUrl).put("notes", notes).put("error", error).put("prerelease", prerelease)
         .put("selfUpdate", selfUpdate)
 
     companion object {
@@ -43,6 +45,7 @@ data class AppItem(
             latest = o.optStringOrNull("latest"), apkName = o.optStringOrNull("apkName"),
             apkUrl = o.optStringOrNull("apkUrl"), apkApiUrl = o.optStringOrNull("apkApiUrl"),
             notes = o.optString("notes"), error = o.optStringOrNull("error"),
+            prerelease = o.optBoolean("prerelease"),
             selfUpdate = o.optBoolean("selfUpdate"),
         )
     }
@@ -54,7 +57,7 @@ fun JSONObject.optStringOrNull(k: String): String? =
 /**
  * Lista apek: wszystkie repo konta [Prefs.owner] z tematem [Prefs.topic].
  * W każdym repo plik updater.json:  {"name": "...", "package": "...", "asset": "regex (opcjonalnie)"}
- * APK brane z najnowszego (nie draft, nie prerelease) GitHub Release.
+ * APK brane z najnowszego GitHub Release zgodnie z wybranym kanałem stable/beta.
  */
 object Catalog {
 
@@ -77,7 +80,7 @@ object Catalog {
             if (!full.substringBefore('/').equals(owner, ignoreCase = true)) continue
             val topics = r.optJSONArray("topics") ?: continue
             if ((0 until topics.length()).none { topics.optString(it) == p.topic }) continue
-            out.addAll(readRepo(ctx, full, r.optString("default_branch", "main"), r.optString("name"), token))
+            out.addAll(readRepo(ctx, full, r.optString("default_branch", "main"), r.optString("name"), token, p.betaChannel))
         }
         out.sortWith(compareBy<AppItem>({ it.pkg != BuildConfigPkg.SELF }, { it.name.lowercase() }))
         p.catalogJson = JSONArray().apply { out.forEach { put(it.toJson()) } }.toString()
@@ -124,7 +127,7 @@ object Catalog {
      * Z "tag": najwyższa wersja spośród wydań o tagu zaczynającym się od prefiksu.
      * Bez "tag": wydanie oznaczone jako najnowsze (latest).
      */
-    private fun readRepo(ctx: Context, full: String, branch: String, repoName: String, token: String): List<AppItem> {
+    private fun readRepo(ctx: Context, full: String, branch: String, repoName: String, token: String, betaChannel: Boolean): List<AppItem> {
         val meta = try {
             JSONObject(Http.get(ctx, "https://raw.githubusercontent.com/$full/$branch/updater.json", token))
         } catch (e: HttpException) {
@@ -148,24 +151,30 @@ object Catalog {
             }
             val prefix = d.optString("tag")
             try {
-                if (prefix.isEmpty()) {
+                if (prefix.isEmpty() && !betaChannel) {
                     val rel = JSONObject(Http.get(ctx, "https://api.github.com/repos/$full/releases/latest", token))
                     out += fromRelease(full, name, pkg, rel, assetRe, "")
                 } else {
                     val list = releases
                         ?: JSONArray(Http.get(ctx, "https://api.github.com/repos/$full/releases?per_page=100", token))
                             .also { releases = it }
-                    var best: AppItem? = null
+                    var bestStable: AppItem? = null
+                    var bestBeta: AppItem? = null
                     var lastErr: AppItem? = null
                     for (i in 0 until list.length()) {
                         val rel = list.getJSONObject(i)
-                        if (rel.optBoolean("draft") || rel.optBoolean("prerelease")) continue
+                        if (rel.optBoolean("draft")) continue
+                        val isBeta = rel.optBoolean("prerelease")
+                        if (isBeta && !betaChannel) continue
                         if (!rel.optString("tag_name").startsWith(prefix)) continue
                         val cand = fromRelease(full, name, pkg, rel, assetRe, prefix)
                         if (cand.apkUrl == null) { if (lastErr == null) lastErr = cand; continue }
-                        if (best == null || Ver.newer(cand.latest, best.latest)) best = cand
+                        if (isBeta) {
+                            if (bestBeta == null || Ver.newer(cand.latest, bestBeta.latest)) bestBeta = cand
+                        } else if (bestStable == null || Ver.newer(cand.latest, bestStable.latest)) bestStable = cand
                     }
-                    out += best ?: lastErr ?: err(full, name, pkg, "Brak wydań z tagiem $prefix…").first()
+                    out += (if (betaChannel) bestBeta ?: bestStable else bestStable)
+                        ?: lastErr ?: err(full, name, pkg, "Brak wydań z tagiem $prefix…").first()
                 }
             } catch (e: HttpException) {
                 out += err(full, name, pkg, if (e.code == 404) "Brak wydań (Releases)" else e.message)
@@ -193,6 +202,7 @@ object Catalog {
             apkName = apk.optString("name"),
             apkUrl = apk.optString("browser_download_url"),
             apkApiUrl = apk.optString("url"),
+            prerelease = rel.optBoolean("prerelease"),
             notes = notes, error = null,
         )
     }
