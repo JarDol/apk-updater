@@ -254,7 +254,7 @@ class MainActivity : Activity() {
                 tag = item.key; setTag(R.id.role, "install")
             }, lp(-2, -2, left = dp(8)))
         }
-        if (item.isInstalled && item.releaseConfigLoaded) {
+        if (item.releaseConfigLoaded) {
             val isLoadingVersions = item.key in versionsLoading
             row.addView(button(if (isLoadingVersions) "…" else "Wersje") { chooseVersion(item) }.apply {
                 isEnabled = !isLoadingVersions
