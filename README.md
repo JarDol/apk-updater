@@ -52,6 +52,7 @@ Wzór: `UpdateInfoProvider.kt` w E2Stream (`JarDol/enigma2-epgscan`, katalog `e2
 - Lista: repo konta `JarDol` z tematem `android-app` (konto i temat można zmienić w ustawieniach).
 - Dwa ekrany (przyciski `Stable` i `Beta` u góry): `Stable` pokazuje tylko wydania bez prerelease, `Beta` – najnowszą wersję apki (prerelease albo stable, co nowsze). Każdą apkę aktualizujesz osobno, więc beta dla jednej nie wpływa na pozostałe. „Aktualizuj” pojawia się tylko, gdy dostępna wersja jest nowsza od zainstalowanej.
 - Przycisk `Wersje` pozwala ręcznie wybrać dowolne pasujące wydanie z GitHuba, także starsze, zarówno dla zainstalowanej, jak i niezainstalowanej apki. Wybór ten nie zmienia automatycznych aktualizacji.
+- W ustawieniach można ustawić PIN uruchomienia (do 6 cyfr); pusty PIN wyłącza blokadę. Po opuszczeniu aplikacji ponowne wejście wymaga PIN-u. Sprawdzanie aktualizacji w tle działa niezależnie od blokady.
 - Przy instalacji starszej wersji Android może ją zablokować. Wtedy może być konieczne odinstalowanie obecnej wersji i ponowna instalacja; odinstalowanie może usunąć dane apki. Starsza wersja może też nie obsłużyć danych nowszej.
 - Sprawdzanie w tle i „Auto” trzymają się ścieżki, na której apka jest zainstalowana: wersja beta (`-beta.N`) śledzi betę, pozostałe – stable.
 - „Auto: wł” – apka bez własnej aktualizacji aktualizowana automatycznie przy sprawdzaniu w tle

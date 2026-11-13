@@ -7,6 +7,10 @@ import android.content.SharedPreferences
 class Prefs(ctx: Context) {
     private val sp: SharedPreferences = ctx.getSharedPreferences("prefs", Context.MODE_PRIVATE)
 
+    var pin: String
+        get() = sp.getString("pin", "") ?: ""
+        set(v) = sp.edit().putString("pin", v).apply()
+
     /** Konto GitHub, którego repo są przeszukiwane. */
     var owner: String
         get() = sp.getString("owner", null)?.takeIf { it.isNotBlank() } ?: "JarDol"

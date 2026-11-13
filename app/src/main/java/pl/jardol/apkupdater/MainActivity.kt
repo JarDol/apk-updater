@@ -16,9 +16,11 @@ import android.text.InputType
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -48,10 +50,25 @@ class MainActivity : Activity() {
     private var loading = false
     /** Ostrzeżenie po nieudanym odświeżeniu (np. limit GitHub); lista zostaje z ostatnich danych. */
     private var warning: String? = null
+    private var unlocked = false
+    private var resumed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
+        if (prefs.pin.isNotEmpty()) {
+            showPin()
+        } else {
+            unlock()
+        }
+    }
+
+    private fun unlock() {
+        unlocked = true
+        if (resumed) {
+            App.foreground = true
+            App.listener = { pkg, msg -> onInstallResult(pkg, msg) }
+        }
         screen = prefs.screen
         setContentView(buildLayout())
         items = Catalog.cached(this)
@@ -66,6 +83,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        resumed = true
+        if (!unlocked) return
         App.foreground = true
         App.listener = { pkg, msg -> onInstallResult(pkg, msg) }
         // Wersje mogły się zmienić (np. instalacja potwierdzona z powiadomienia).
@@ -75,8 +94,14 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        resumed = false
         App.foreground = false
         App.listener = null
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (::prefs.isInitialized && prefs.pin.isNotEmpty() && !isChangingConfigurations) finish()
     }
 
     override fun onDestroy() {
@@ -87,6 +112,51 @@ class MainActivity : Activity() {
     // ---------------------------------------------------------------- UI
 
     private fun dp(v: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
+
+    private fun showPin() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(24), dp(12), dp(24), dp(12))
+        }
+        val entered = PinEntry(prefs.pin)
+        val info = text(18f, Color.WHITE).apply { text = "Wprowadź PIN" }
+        val grid = GridLayout(this).apply { columnCount = 3 }
+        box.addView(info)
+        box.addView(grid, lp(-2, -2, top = dp(12)))
+        val dialog = AlertDialog.Builder(this).setTitle("APK Updater zablokowany")
+            .setView(box).setNegativeButton("Wyjdź") { _, _ -> finish() }
+            .setCancelable(false).create()
+        fun digit(d: Int) {
+            when (entered.add(d)) {
+                PinEntry.Result.MATCH -> {
+                    dialog.dismiss()
+                    unlock()
+                }
+                PinEntry.Result.WRONG -> {
+                    info.text = "Błędny PIN — spróbuj ponownie"
+                }
+                PinEntry.Result.INCOMPLETE -> info.text = "•".repeat(entered.length)
+            }
+        }
+        for (d in 1..9) grid.addView(button(d.toString()) { digit(d) })
+        grid.addView(button("Usuń") {
+            entered.delete()
+            info.text = if (entered.length == 0) "Wprowadź PIN" else "•".repeat(entered.length)
+        })
+        grid.addView(button("0") { digit(0) })
+        dialog.setOnKeyListener { _, key, event ->
+            if (event.action == KeyEvent.ACTION_DOWN && key in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
+                digit(key - KeyEvent.KEYCODE_0)
+                true
+            } else if (event.action == KeyEvent.ACTION_DOWN && key == KeyEvent.KEYCODE_BACK) {
+                finish()
+                true
+            } else false
+        }
+        dialog.show()
+        grid.getChildAt(0).requestFocus()
+    }
 
     private fun text(size: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, size)
@@ -447,14 +517,25 @@ class MainActivity : Activity() {
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         val hours = field("Sprawdzaj w tle co ile godzin (0 = nie sprawdzaj)", prefs.intervalHours.toString(),
             InputType.TYPE_CLASS_NUMBER)
+        val pin = field("PIN uruchomienia (maks. 6 cyfr; puste = bez blokady)", prefs.pin,
+            InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD)
         box.addView(text(13f, 0xFF78909C.toInt()).apply {
             text = "Wersja ${packageManager.getPackageInfo(packageName, 0).versionName}"
         }, lp(-1, -2, top = dp(12)))
 
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("Ustawienia")
             .setView(ScrollView(this).apply { addView(box) })
-            .setPositiveButton("Zapisz") { _, _ ->
+            .setPositiveButton("Zapisz", null)
+            .setNegativeButton("Anuluj", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val newPin = pin.text.toString()
+                if (newPin.length > 6 || newPin.any { it !in '0'..'9' }) {
+                    pin.error = "PIN może zawierać maksymalnie 6 cyfr"
+                    return@setOnClickListener
+                }
                 val changed = owner.text.toString().trim() != prefs.owner ||
                     topic.text.toString().trim().lowercase() != prefs.topic ||
                     token.text.toString().trim() != prefs.token
@@ -462,10 +543,12 @@ class MainActivity : Activity() {
                 prefs.topic = topic.text.toString()
                 prefs.token = token.text.toString()
                 prefs.intervalHours = hours.text.toString().toIntOrNull() ?: 6
+                prefs.pin = newPin
                 App.schedule(this)
                 if (changed) { items = emptyList(); warning = null; refresh() } else render()
+                dialog.dismiss()
             }
-            .setNegativeButton("Anuluj", null)
-            .show()
+        }
+        dialog.show()
     }
 }
