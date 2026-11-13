@@ -20,6 +20,9 @@ data class AppItem(
     val prerelease: Boolean = false,
     /** Apka ma własną aktualizację i własne ustawienie „Automatyczna aktualizacja” (updater.json: selfUpdate). */
     val selfUpdate: Boolean = false,
+    val tagPrefix: String = "",
+    val assetPattern: String? = null,
+    val releaseConfigLoaded: Boolean = false,
     // uzupełniane lokalnie:
     val installed: String? = null,
     val installedCode: Long = -1,
@@ -38,7 +41,8 @@ data class AppItem(
         .put("repo", repo).put("name", name).put("pkg", pkg)
         .put("latest", latest).put("apkName", apkName).put("apkUrl", apkUrl)
         .put("apkApiUrl", apkApiUrl).put("notes", notes).put("error", error).put("prerelease", prerelease)
-        .put("selfUpdate", selfUpdate).put("channel", channel)
+        .put("selfUpdate", selfUpdate).put("tagPrefix", tagPrefix).put("assetPattern", assetPattern)
+        .put("releaseConfigLoaded", releaseConfigLoaded).put("channel", channel)
 
     companion object {
         const val STABLE = "stable"
@@ -51,6 +55,9 @@ data class AppItem(
             notes = o.optString("notes"), error = o.optStringOrNull("error"),
             prerelease = o.optBoolean("prerelease"),
             selfUpdate = o.optBoolean("selfUpdate"),
+            tagPrefix = o.optString("tagPrefix"),
+            assetPattern = o.optStringOrNull("assetPattern"),
+            releaseConfigLoaded = o.optBoolean("releaseConfigLoaded"),
             channel = o.optString("channel", STABLE),
         )
     }
@@ -122,6 +129,43 @@ object Catalog {
     /** Ostatnio pobrana lista (bez sieci). */
     fun cached(ctx: Context): List<AppItem> = withInstalled(ctx, savedItems(Prefs(ctx)))
 
+    /** Dostępne wydania danej apki (sieć — poza wątkiem UI). */
+    fun releasesFor(ctx: Context, item: AppItem): List<AppItem> {
+        val p = Prefs(ctx)
+        if (p.blockedUntil > System.currentTimeMillis()) {
+            throw RateLimitException(403, Http.rateMsg(p.blockedUntil), p.blockedUntil)
+        }
+        check(item.releaseConfigLoaded) { "Odśwież listę apek przed wyborem wydania" }
+        val list = JSONArray(Http.get(ctx, "https://api.github.com/repos/${item.repo}/releases?per_page=100", p.token))
+        val assetRe = item.assetPattern?.let { pattern -> try { Regex(pattern) } catch (_: Exception) { null } }
+        val out = ArrayList<AppItem>()
+        for (i in 0 until list.length()) {
+            val rel = list.getJSONObject(i)
+            val tag = rel.optString("tag_name")
+            val cand = fromRelease(item.repo, item.name, item.pkg, rel, assetRe, item.tagPrefix, item.assetPattern)
+            if (!isSelectableRelease(tag, item.tagPrefix, rel.optBoolean("draft"), cand.apkUrl != null)) continue
+            out += cand.copy(
+                selfUpdate = item.selfUpdate,
+                channel = item.channel,
+                installed = item.installed,
+                installedCode = item.installedCode,
+                appAuto = item.appAuto,
+            )
+        }
+        return sortReleases(out)
+    }
+
+    internal fun isSelectableRelease(tag: String, prefix: String, draft: Boolean, hasApk: Boolean) =
+        !draft && tag.startsWith(prefix) && hasApk
+
+    internal fun sortReleases(releases: List<AppItem>) = releases.sortedWith { a, b ->
+        when {
+            Ver.newer(a.latest, b.latest) -> -1
+            Ver.newer(b.latest, a.latest) -> 1
+            else -> 0
+        }
+    }
+
     /** Uzupełnia zainstalowane wersje (lokalnie, szybkie). */
     fun withInstalled(ctx: Context, items: List<AppItem>): List<AppItem> {
         val pm = ctx.packageManager
@@ -176,9 +220,8 @@ object Catalog {
             val name = d.optString("name").ifEmpty { repoName }
             val pkg = d.optString("package")
             if (pkg.isEmpty()) { out += bothChannels(err(full, name, "", "updater.json bez pola \"package\"")); continue }
-            val assetRe = d.optString("asset").takeIf { it.isNotEmpty() }?.let {
-                try { Regex(it) } catch (_: Exception) { null }
-            }
+            val assetPattern = d.optString("asset").takeIf { it.isNotEmpty() }
+            val assetRe = assetPattern?.let { try { Regex(it) } catch (_: Exception) { null } }
             val prefix = d.optString("tag")
             try {
                 val list = releases
@@ -191,7 +234,7 @@ object Catalog {
                     val rel = list.getJSONObject(i)
                     if (rel.optBoolean("draft")) continue
                     if (!rel.optString("tag_name").startsWith(prefix)) continue
-                    val cand = fromRelease(full, name, pkg, rel, assetRe, prefix)
+                    val cand = fromRelease(full, name, pkg, rel, assetRe, prefix, assetPattern)
                     if (cand.apkUrl == null) { if (lastErr == null) lastErr = cand; continue }
                     // bez prefiksu wygrywa pierwsze (najnowsze wg daty), z prefiksem — najwyższa wersja
                     fun better(cur: AppItem?) = cur == null || (prefix.isNotEmpty() && Ver.newer(cand.latest, cur.latest))
@@ -217,7 +260,15 @@ object Catalog {
         return out
     }
 
-    private fun fromRelease(full: String, name: String, pkg: String, rel: JSONObject, assetRe: Regex?, prefix: String): AppItem {
+    private fun fromRelease(
+        full: String,
+        name: String,
+        pkg: String,
+        rel: JSONObject,
+        assetRe: Regex?,
+        prefix: String,
+        assetPattern: String?,
+    ): AppItem {
         val tag = rel.optString("tag_name")
         val assets = rel.optJSONArray("assets") ?: JSONArray()
         var apk: JSONObject? = null
@@ -229,7 +280,13 @@ object Catalog {
         }
         val notes = rel.optString("body").trim()
         val version = Ver.norm(tag.removePrefix(prefix)) ?: apk?.let { Ver.norm(it.optString("name")) } ?: tag
-        if (apk == null) return AppItem(full, name, pkg, version, null, null, null, notes, "Wydanie $tag bez pliku APK")
+        if (apk == null) return AppItem(
+            full, name, pkg, version, null, null, null, notes, "Wydanie $tag bez pliku APK",
+            prerelease = rel.optBoolean("prerelease"),
+            tagPrefix = prefix,
+            assetPattern = assetPattern,
+            releaseConfigLoaded = true,
+        )
         return AppItem(
             repo = full, name = name, pkg = pkg, latest = version,
             apkName = apk.optString("name"),
@@ -237,6 +294,9 @@ object Catalog {
             apkApiUrl = apk.optString("url"),
             prerelease = rel.optBoolean("prerelease"),
             notes = notes, error = null,
+            tagPrefix = prefix,
+            assetPattern = assetPattern,
+            releaseConfigLoaded = true,
         )
     }
 }

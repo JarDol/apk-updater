@@ -36,15 +36,19 @@ class InstallReceiver : BroadcastReceiver() {
             }
             else -> {
                 val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
-                val text = when (status) {
-                    PackageInstaller.STATUS_FAILURE_ABORTED -> "Instalacja anulowana"
-                    PackageInstaller.STATUS_FAILURE_CONFLICT ->
+                val downgradeBlocked = msg?.contains("VERSION_DOWNGRADE", ignoreCase = true) == true ||
+                    msg?.contains("version downgrade", ignoreCase = true) == true
+                val text = when {
+                    downgradeBlocked ->
+                        "Android zablokował instalację starszej wersji. Możesz odinstalować obecną aplikację i spróbować ponownie; jej dane mogą zostać usunięte."
+                    status == PackageInstaller.STATUS_FAILURE_ABORTED -> "Instalacja anulowana"
+                    status == PackageInstaller.STATUS_FAILURE_CONFLICT ->
                         "Konflikt — zainstalowana wersja ma inny podpis? Odinstaluj ją ręcznie i zainstaluj ponownie"
-                    PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> "Apka niezgodna z tym urządzeniem"
-                    PackageInstaller.STATUS_FAILURE_STORAGE -> "Za mało miejsca"
-                    PackageInstaller.STATUS_FAILURE_BLOCKED -> "Instalacja zablokowana przez system"
+                    status == PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> "Apka niezgodna z tym urządzeniem"
+                    status == PackageInstaller.STATUS_FAILURE_STORAGE -> "Za mało miejsca"
+                    status == PackageInstaller.STATUS_FAILURE_BLOCKED -> "Instalacja zablokowana przez system"
                     else -> "Błąd instalacji"
-                } + (msg?.let { " ($it)" } ?: "")
+                } + if (msg != null && !downgradeBlocked) " ($msg)" else ""
                 if (!App.foreground) Notify.error(ctx, pkg, name, text)
                 App.post(pkg, text)
             }

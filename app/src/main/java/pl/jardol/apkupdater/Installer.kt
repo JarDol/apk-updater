@@ -7,6 +7,7 @@ import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.content.pm.PackageInfoCompat
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -40,7 +41,12 @@ object Installer {
     }
 
     /** Pobiera, sprawdza i przekazuje APK do instalacji. Wynik przychodzi do [InstallReceiver]. */
-    fun downloadAndInstall(ctx: Context, item: AppItem, progress: (Int) -> Unit) {
+    fun downloadAndInstall(
+        ctx: Context,
+        item: AppItem,
+        allowDowngrade: Boolean = false,
+        progress: (Int) -> Unit,
+    ) {
         if (!canInstall(ctx)) throw NeedInstallPermission()
         // Jedno pobieranie naraz (klik + zadanie w tle nie mogą pisać do tego samego pliku).
         val apk = synchronized(this) {
@@ -48,11 +54,18 @@ object Installer {
             var ok: File? = null
             for (attempt in 1..2) {
                 try {
-                    ok = download(ctx, item, progress).also { verify(ctx, it, item.pkg) }
+                    val candidate = download(ctx, item, progress)
+                    val candidateCode = verify(ctx, candidate, item.pkg)
+                    if (isDowngrade(item.installedCode, candidateCode) && !allowDowngrade) {
+                        candidate.delete()
+                        throw IOException("Pobrane APK jest starsze. Wybierz wydanie ręcznie i potwierdź downgrade.")
+                    }
+                    ok = candidate
                     break
                 } catch (e: IOException) { last = e }
             }
-            ok ?: throw last!!
+            val file = ok ?: throw last!!
+            file
         }
         install(ctx, apk, item)
     }
@@ -124,7 +137,7 @@ object Installer {
     }
 
     /** Pobrany plik musi być tą apką, którą deklaruje updater.json. */
-    private fun verify(ctx: Context, apk: File, pkg: String) {
+    private fun verify(ctx: Context, apk: File, pkg: String): Long {
         @Suppress("DEPRECATION")
         val info = ctx.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
             ?: run { apk.delete(); throw IOException("Pobrany plik nie jest poprawnym APK") }
@@ -132,7 +145,11 @@ object Installer {
             apk.delete()
             throw IOException("APK ma pakiet ${info.packageName}, oczekiwano $pkg")
         }
+        return PackageInfoCompat.getLongVersionCode(info)
     }
+
+    internal fun isDowngrade(installedCode: Long, apkCode: Long) =
+        installedCode >= 0 && apkCode < installedCode
 
     private fun install(ctx: Context, apk: File, item: AppItem) {
         val pi = ctx.packageManager.packageInstaller

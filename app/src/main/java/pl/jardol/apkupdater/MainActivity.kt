@@ -43,6 +43,7 @@ class MainActivity : Activity() {
     /** Komunikat przy wierszu (postęp, błąd) — przeżywa ponowne rysowanie listy. */
     private val rowMsg = HashMap<String, String>()
     private val busy = HashSet<String>()
+    private val versionsLoading = HashSet<String>()
     private val rowStatus = HashMap<String, TextView>()
     private var loading = false
     /** Ostrzeżenie po nieudanym odświeżeniu (np. limit GitHub); lista zostaje z ostatnich danych. */
@@ -253,6 +254,13 @@ class MainActivity : Activity() {
                 tag = item.key; setTag(R.id.role, "install")
             }, lp(-2, -2, left = dp(8)))
         }
+        if (item.isInstalled && item.releaseConfigLoaded) {
+            val isLoadingVersions = item.key in versionsLoading
+            row.addView(button(if (isLoadingVersions) "…" else "Wersje") { chooseVersion(item) }.apply {
+                isEnabled = !isLoadingVersions
+                tag = item.key; setTag(R.id.role, "versions")
+            }, lp(-2, -2, left = dp(8)))
+        }
         if (item.notes.isNotEmpty()) {
             row.addView(button("Zmiany") { showNotes(item) }.apply {
                 tag = item.key; setTag(R.id.role, "notes")
@@ -322,7 +330,61 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun install(item: AppItem) {
+    private fun chooseVersion(item: AppItem) {
+        if (!item.releaseConfigLoaded || !versionsLoading.add(item.key)) return
+        rowMsg[item.key] = "Pobieranie wydań…"
+        render()
+        io.execute {
+            val result = runCatching { Catalog.releasesFor(this, item) }
+            main.post {
+                versionsLoading.remove(item.key)
+                rowMsg.remove(item.key)
+                result.onSuccess { releases ->
+                    render()
+                    if (releases.isEmpty()) {
+                        toast("Brak wydań z pasującym APK")
+                    } else {
+                        showVersionPicker(item, releases)
+                    }
+                }.onFailure {
+                    rowMsg[item.key] = "Błąd pobierania wydań: ${it.message}"
+                    render()
+                    toast("Błąd pobierania wydań: ${it.message}")
+                }
+            }
+        }
+    }
+
+    private fun showVersionPicker(item: AppItem, releases: List<AppItem>) {
+        val labels = releases.map { release ->
+            "${release.latest ?: "?"}${if (release.prerelease) "  [BETA]" else ""}"
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("${item.name} — wybierz wydanie")
+            .setItems(labels) { _, index -> confirmVersion(item, releases[index]) }
+            .setNegativeButton("Anuluj", null)
+            .show()
+    }
+
+    private fun confirmVersion(item: AppItem, release: AppItem) {
+        val downgrade = item.installed != null && Ver.newer(item.installed, release.latest)
+        val message = buildString {
+            append("Zainstalowana: ${item.installed ?: "brak"}\nWybrana: ${release.latest}")
+            if (downgrade) {
+                append("\n\nTo starsza wersja. Android może zablokować instalację; może być konieczne odinstalowanie obecnej wersji, co może usunąć jej dane.")
+            }
+        }
+        AlertDialog.Builder(this)
+            .setTitle("${item.name} ${release.latest ?: ""}")
+            .setMessage(message)
+            .setPositiveButton(if (downgrade) "Instaluj starszą" else "Instaluj") { _, _ ->
+                install(release, allowDowngrade = downgrade)
+            }
+            .setNegativeButton("Anuluj", null)
+            .show()
+    }
+
+    private fun install(item: AppItem, allowDowngrade: Boolean = false) {
         if (!Installer.canInstall(this)) {
             toast("Zezwól na instalowanie apek z tego źródła, potem wróć i spróbuj ponownie")
             Installer.openInstallPermission(this)
@@ -333,7 +395,7 @@ class MainActivity : Activity() {
         render()
         io.execute {
             try {
-                Installer.downloadAndInstall(this, item) { pct ->
+                Installer.downloadAndInstall(this, item, allowDowngrade) { pct ->
                     main.post {
                         rowMsg[item.key] = "Pobieranie… $pct%"
                         rowStatus[item.key]?.text = rowMsg[item.key]
