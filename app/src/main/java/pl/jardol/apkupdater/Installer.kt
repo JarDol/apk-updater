@@ -88,7 +88,7 @@ object Installer {
     }
 
     fun download(ctx: Context, item: AppItem, progress: (Int) -> Unit): File {
-        val token = Prefs(ctx).token
+        val token = Prefs(ctx).tokenFor(item.source)
         cleanup(ctx)
         val dir = File(ctx.cacheDir, "apk").apply { mkdirs() }
         val out = File(dir, item.apkName ?: "${item.pkg}.apk")

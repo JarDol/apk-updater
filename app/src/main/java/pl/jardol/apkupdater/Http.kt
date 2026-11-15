@@ -21,7 +21,7 @@ object Http {
 
     fun get(ctx: Context, url: String, token: String): String {
         val dir = File(ctx.cacheDir, "http").apply { mkdirs() }
-        val key = sha1(url)
+        val key = sha1(if (token.isEmpty()) url else url + "#" + sha1(token))
         val body = File(dir, "$key.body")
         val etag = File(dir, "$key.etag")
 
@@ -47,7 +47,6 @@ object Http {
                     if ((code == 403 || code == 429) && c.getHeaderField("X-RateLimit-Remaining") == "0") {
                         val resetAt = c.getHeaderField("X-RateLimit-Reset")?.toLongOrNull()?.let { it * 1000 }
                             ?: (System.currentTimeMillis() + 10 * 60000)
-                        Prefs(ctx).blockedUntil = resetAt
                         throw RateLimitException(code, rateMsg(resetAt), resetAt)
                     }
                     throw HttpException(code, "HTTP $code: $url")
@@ -60,7 +59,7 @@ object Http {
 
     fun rateMsg(resetAt: Long): String {
         val mins = ((resetAt - System.currentTimeMillis()) / 60000 + 1).coerceAtLeast(1)
-        return "Limit zapytań GitHub wyczerpany (odnowi się za ok. $mins min). Pokazuję ostatnie dane. Dodaj token w ustawieniach."
+        return "Limit zapytań GitHub wyczerpany (odnowi się za ok. $mins min). Pokazuję ostatnie dane. Token dla tego repo podnosi limit."
     }
 
     private fun sha1(s: String): String =

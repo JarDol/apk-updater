@@ -2,7 +2,7 @@ package pl.jardol.apkupdater
 
 import android.Manifest
 import android.app.Activity
-import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -16,11 +16,8 @@ import android.text.InputType
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
-import android.view.KeyEvent
 import android.view.View
 import android.widget.Button
-import android.widget.EditText
-import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -29,17 +26,23 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.concurrent.Executors
 
+/**
+ * Dwa poziomy: lista podpiętych repo → apki wybranego repo (WSTECZ wraca do listy).
+ * Kanał stable / beta ustawiany per repo, wspólny dla wszystkich jego apek.
+ */
 class MainActivity : Activity() {
 
     private val io = Executors.newFixedThreadPool(2)
     private val main = Handler(Looper.getMainLooper())
     private lateinit var prefs: Prefs
+    private lateinit var titleView: TextView
     private lateinit var status: TextView
     private lateinit var list: LinearLayout
     private lateinit var refreshBtn: Button
-    private lateinit var stableBtn: Button
-    private lateinit var betaBtn: Button
-    private var screen = AppItem.STABLE
+    private lateinit var channelBtn: Button
+
+    /** Id otwartego źródła; null = lista repo. */
+    private var current: String? = null
 
     private var items: List<AppItem> = emptyList()
     /** Komunikat przy wierszu (postęp, błąd) — przeżywa ponowne rysowanie listy. */
@@ -48,8 +51,6 @@ class MainActivity : Activity() {
     private val versionsLoading = HashSet<String>()
     private val rowStatus = HashMap<String, TextView>()
     private var loading = false
-    /** Ostrzeżenie po nieudanym odświeżeniu (np. limit GitHub); lista zostaje z ostatnich danych. */
-    private var warning: String? = null
     private var unlocked = false
     private var resumed = false
 
@@ -69,8 +70,9 @@ class MainActivity : Activity() {
             App.foreground = true
             App.listener = { pkg, msg -> onInstallResult(pkg, msg) }
         }
-        screen = prefs.screen
         setContentView(buildLayout())
+        // jedno źródło — od razu jego apki (jak dotąd)
+        current = prefs.sources.singleOrNull()?.id
         items = Catalog.cached(this)
         render()
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -78,7 +80,7 @@ class MainActivity : Activity() {
         ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
-        refresh()
+        refresh(all = true)
     }
 
     override fun onResume() {
@@ -107,6 +109,18 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         super.onDestroy()
         io.shutdown()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        val cur = current
+        if (unlocked && cur != null && prefs.sources.size > 1) {
+            current = null
+            render(focusTag = "src:$cur")
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
     }
 
     // ---------------------------------------------------------------- UI
@@ -145,14 +159,12 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(text(24f, Color.WHITE, true).apply { text = getString(R.string.app_name) },
-            lp(0, -2, 1f))
-        stableBtn = button("Stable") { showScreen(AppItem.STABLE) }
-        betaBtn = button("Beta") { showScreen(AppItem.BETA) }
-        header.addView(stableBtn, lp(-2, -2))
-        header.addView(betaBtn, lp(-2, -2, left = dp(8)))
-        refreshBtn = button("Odśwież") { refresh() }
-        header.addView(refreshBtn, lp(-2, -2, left = dp(24)))
+        titleView = text(24f, Color.WHITE, true).apply { isSingleLine = true; ellipsize = TextUtils.TruncateAt.END }
+        header.addView(titleView, lp(0, -2, 1f))
+        channelBtn = button("Kanał") { chooseChannel() }
+        header.addView(channelBtn, lp(-2, -2))
+        refreshBtn = button("Odśwież") { refresh(all = current == null) }
+        header.addView(refreshBtn, lp(-2, -2, left = dp(8)))
         header.addView(button("Ustawienia") { settings() }, lp(-2, -2, left = dp(8)))
         root.addView(header)
 
@@ -168,64 +180,115 @@ class MainActivity : Activity() {
         return root
     }
 
-    private fun visibleItems() = Catalog.forChannel(items, screen)
+    private fun currentSource(): Source? = current?.let { prefs.source(it) }
 
-    private fun showScreen(s: String) {
-        if (s == screen) return
-        screen = s
-        prefs.screen = s
-        render()
+    private fun channelLabel(s: Source) = if (s.isBeta) "Beta" else "Stable"
+
+    private fun sourceLabel(s: Source) = if (s.isRepo) s.spec else "${s.spec}  (temat: ${s.topic})"
+
+    private fun visibleItems(): List<AppItem> = currentSource()?.let { Catalog.forSource(items, it) } ?: emptyList()
+
+    private fun checkedAt(): String {
+        val last = prefs.lastCheck
+        return if (last == 0L) "Jeszcze nie sprawdzano"
+        else "Sprawdzono: " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(last))
     }
 
     private fun setStatus() {
-        val last = prefs.lastCheck
+        val src = currentSource()
+        val errors = prefs.sourceErrors
+        if (src == null) {
+            titleView.text = getString(R.string.app_name)
+            channelBtn.visibility = View.GONE
+            val sources = prefs.sources
+            val upd = sources.sumOf { s -> Catalog.forSource(items, s).count { it.hasUpdate } }
+            status.text = if (loading) "Sprawdzam repo…"
+            else checkedAt() + "  ·  repo: ${sources.size}" + (if (upd > 0) "  ·  aktualizacji: $upd" else "")
+            return
+        }
+        titleView.text = sourceLabel(src)
+        channelBtn.visibility = View.VISIBLE
+        channelBtn.text = "Kanał: ${channelLabel(src)}"
         val shown = visibleItems()
         val upd = shown.count { it.hasUpdate }
-        val channel = if (screen == AppItem.BETA) "beta" else "stable"
-        // zaznaczony ekran wyróżniony kropką
-        stableBtn.text = if (screen == AppItem.STABLE) "● Stable" else "Stable"
-        betaBtn.text = if (screen == AppItem.BETA) "● Beta" else "Beta"
-        val base = when {
-            loading -> "Sprawdzam repo ${prefs.owner} (temat: ${prefs.topic})…"
-            last == 0L -> "Jeszcze nie sprawdzano"
-            else -> "Sprawdzono: " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(last)) +
-                "  ·  ekran: $channel  ·  apek: ${shown.size}" + (if (upd > 0) "  ·  aktualizacji: $upd" else "")
-        }
-        status.text = if (warning != null && !loading) "$base\n$warning" else base
+        val base = if (loading) "Sprawdzam ${src.spec}…"
+        else checkedAt() + "  ·  apek: ${shown.size}" + (if (upd > 0) "  ·  aktualizacji: $upd" else "")
+        val warn = errors[src.id]
+        status.text = if (warn != null && !loading) "$base\n$warn" else base
     }
 
-    private fun render() {
-        val focusedRepo = (currentFocus?.tag as? String)
-        val focusedRole = currentFocus?.getTag(R.id.role) as? String
+    private fun render(focusTag: String? = null) {
+        val focusedTag = focusTag ?: (currentFocus?.tag as? String)
+        val focusedRole = if (focusTag != null) null else currentFocus?.getTag(R.id.role) as? String
         list.removeAllViews()
         rowStatus.clear()
+        if (current != null && currentSource() == null) current = null
         setStatus()
-        val shown = visibleItems()
-        if (shown.isEmpty() && !loading) {
-            list.addView(text(16f, 0xFFB0BEC5.toInt()).apply {
-                text = "Brak apek. Oznacz repo tematem „${prefs.topic}”, dodaj do niego updater.json " +
-                    "i wydaj Release z plikiem APK."
-            })
+        if (current == null) renderSources() else renderApps()
+        if (focusedTag != null) {
+            val v = list.findViewWithTag<View>(focusedTag)
+            (findRole(list, focusedTag, focusedRole) ?: v)?.requestFocus()
         }
-        var restore: View? = null
-        for (item in shown) {
-            val row = buildRow(item)
-            list.addView(row, lp(-1, -2, top = dp(8)))
-            if (item.key == focusedRepo) {
-                restore = row.findViewWithTag<View>(item.key)?.let { first ->
-                    // ten sam przycisk co przed odświeżeniem, jeśli nadal jest
-                    findRole(row, item.key, focusedRole) ?: first
-                }
-            }
-        }
-        restore?.requestFocus()
     }
 
-    private fun findRole(root: View, repo: String, role: String?): View? {
+    private fun renderSources() {
+        val sources = prefs.sources
+        val errors = prefs.sourceErrors
+        if (sources.isEmpty()) {
+            list.addView(text(16f, 0xFFB0BEC5.toInt()).apply {
+                text = "Brak podpiętych repo. Dodaj konto GitHub (np. JarDol) albo pojedyncze repo (np. JarDol/e2stream)."
+            })
+            list.addView(button("Dodaj repo") { addSource { settings() } }, lp(-2, -2, top = dp(12)))
+            return
+        }
+        for (s in sources) {
+            val shown = Catalog.forSource(items, s)
+            val upd = shown.count { it.hasUpdate }
+            val value = buildString {
+                append("kanał: ${channelLabel(s)}  ·  apek: ${shown.size}")
+                if (upd > 0) append("  ·  aktualizacji: $upd")
+                if (s.token.isNotEmpty()) append("  ·  token")
+                errors[s.id]?.let { append("\n").append(it) }
+            }
+            val it = TvPanel.item(this, sourceLabel(s), value) { current = s.id; render(); list.getChildAt(0)?.requestFocus() }
+            it.title.textSize = 20f
+            if (upd > 0) it.value.setTextColor(0xFFA5D6A7.toInt())
+            if (errors[s.id] != null) it.value.setTextColor(0xFFFFCC80.toInt())
+            it.view.tag = "src:${s.id}"
+            list.addView(it.view, lp(-1, -2, top = dp(8)))
+        }
+    }
+
+    private fun renderApps() {
+        val shown = visibleItems()
+        val src = currentSource() ?: return
+        if (shown.isEmpty() && !loading) {
+            list.addView(text(16f, 0xFFB0BEC5.toInt()).apply {
+                text = if (src.isRepo) "Brak apek. Dodaj do repo updater.json i wydaj Release z plikiem APK."
+                else "Brak apek. Oznacz repo tematem „${src.topic}”, dodaj do niego updater.json i wydaj Release z plikiem APK."
+                isFocusable = true
+            })
+        }
+        for (item in shown) list.addView(buildRow(item), lp(-1, -2, top = dp(8)))
+    }
+
+    private fun findRole(root: View, tag: String, role: String?): View? {
         if (role == null) return null
-        if (root.tag == repo && root.getTag(R.id.role) == role && root.isEnabled) return root
-        if (root is LinearLayout) for (i in 0 until root.childCount) findRole(root.getChildAt(i), repo, role)?.let { return it }
+        if (root.tag == tag && root.getTag(R.id.role) == role && root.isEnabled) return root
+        if (root is LinearLayout) for (i in 0 until root.childCount) findRole(root.getChildAt(i), tag, role)?.let { return it }
         return null
+    }
+
+    private fun chooseChannel() {
+        val src = currentSource() ?: return
+        TvPanel.choose(this, "Kanał dla ${src.spec}", listOf(
+            "Stable — tylko wydania stabilne",
+            "Beta — najnowsze wydanie (także beta)",
+        ), if (src.isBeta) 1 else 0) { i ->
+            prefs.updateSource(src.copy(channel = if (i == 1) AppItem.BETA else AppItem.STABLE))
+            render()
+            channelBtn.requestFocus()
+        }
     }
 
     private fun buildRow(item: AppItem): View {
@@ -310,8 +373,8 @@ class MainActivity : Activity() {
         if (row.childCount == 1) {
             // brak przycisków — wiersz musi być osiągalny pilotem, żeby dało się przewinąć
             row.isFocusable = true
-            row.tag = item.key
         }
+        row.tag = item.key
         return row
     }
 
@@ -322,39 +385,36 @@ class MainActivity : Activity() {
         packageManager.getLeanbackLaunchIntentForPackage(pkg) ?: packageManager.getLaunchIntentForPackage(pkg)
 
     private fun showNotes(item: AppItem) {
-        AlertDialog.Builder(this)
-            .setTitle("${item.name} ${item.latest ?: ""}")
-            .setMessage(item.notes)
-            .setPositiveButton("OK", null)
-            .setNeutralButton("Strona repo") { _, _ ->
+        TvPanel.message(this, "${item.name} ${item.latest ?: ""}", item.notes, listOf(
+            TvPanel.Btn("OK"),
+            TvPanel.Btn("Strona repo") {
                 try {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/${item.repo}/releases")))
                 } catch (_: Exception) {
                     toast("Brak przeglądarki")
                 }
-            }
-            .show()
+            },
+        ))
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
 
     // ---------------------------------------------------------------- akcje
 
-    private fun refresh() {
+    /** [all] = wszystkie źródła; inaczej tylko otwarte. */
+    private fun refresh(all: Boolean) {
         if (loading) return
         loading = true
         refreshBtn.isEnabled = false
         setStatus()
+        val only = if (all) null else current
         io.execute {
-            val res = runCatching { Catalog.refresh(this) }
+            val res = runCatching { Catalog.refresh(this, only) }
             main.post {
                 loading = false
                 refreshBtn.isEnabled = true
-                res.onSuccess { items = it; warning = null }
-                res.onFailure {
-                    warning = if (it is RateLimitException) it.message else "Błąd: ${it.message}"
-                    if (it !is RateLimitException) toast("Błąd: ${it.message}")
-                }
+                res.onSuccess { items = it }
+                res.onFailure { toast("Błąd: ${it.message}") }
                 render()
             }
         }
@@ -387,13 +447,11 @@ class MainActivity : Activity() {
 
     private fun showVersionPicker(item: AppItem, releases: List<AppItem>) {
         val labels = releases.map { release ->
-            "${release.latest ?: "?"}${if (release.prerelease) "  [BETA]" else ""}"
-        }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle("${item.name} — wybierz wydanie")
-            .setItems(labels) { _, index -> confirmVersion(item, releases[index]) }
-            .setNegativeButton("Anuluj", null)
-            .show()
+            val mark = if (release.latest == item.installed) "  (zainstalowana)" else ""
+            "${release.latest ?: "?"}${if (release.prerelease) "  [BETA]" else ""}$mark"
+        }
+        val sel = releases.indexOfFirst { it.latest == item.installed }.coerceAtLeast(0)
+        TvPanel.choose(this, "${item.name} — wybierz wydanie", labels, sel) { index -> confirmVersion(item, releases[index]) }
     }
 
     private fun confirmVersion(item: AppItem, release: AppItem) {
@@ -404,14 +462,10 @@ class MainActivity : Activity() {
                 append("\n\nTo starsza wersja. Android może zablokować instalację; może być konieczne odinstalowanie obecnej wersji, co może usunąć jej dane.")
             }
         }
-        AlertDialog.Builder(this)
-            .setTitle("${item.name} ${release.latest ?: ""}")
-            .setMessage(message)
-            .setPositiveButton(if (downgrade) "Instaluj starszą" else "Instaluj") { _, _ ->
-                install(release, allowDowngrade = downgrade)
-            }
-            .setNegativeButton("Anuluj", null)
-            .show()
+        TvPanel.confirm(this, "${item.name} ${release.latest ?: ""}", message,
+            if (downgrade) "Instaluj starszą" else "Instaluj") {
+            install(release, allowDowngrade = downgrade)
+        }
     }
 
     private fun install(item: AppItem, allowDowngrade: Boolean = false) {
@@ -446,66 +500,178 @@ class MainActivity : Activity() {
     }
 
     private fun onInstallResult(pkg: String, msg: String?) {
-        val repo = items.firstOrNull { it.pkg == pkg }?.key ?: return
-        if (msg == null) {
-            busy.remove(repo)
-            rowMsg[repo] = "Zainstalowano ✓"
-        } else if (msg.startsWith("Czeka")) {
-            rowMsg[repo] = msg
-        } else {
-            busy.remove(repo)
-            rowMsg[repo] = msg
+        val keys = items.filter { it.pkg == pkg }.map { it.key }.distinct()
+        if (keys.isEmpty()) return
+        for (key in keys) {
+            when {
+                msg == null -> { busy.remove(key); rowMsg[key] = "Zainstalowano ✓" }
+                msg.startsWith("Czeka") -> rowMsg[key] = msg
+                else -> { busy.remove(key); rowMsg[key] = msg }
+            }
         }
         items = Catalog.withInstalled(this, items)
         render()
     }
 
-    private fun settings() {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(8), dp(24), 0)
-        }
-        fun field(label: String, value: String, type: Int): EditText {
-            box.addView(text(14f, 0xFFB0BEC5.toInt()).apply { text = label }, lp(-1, -2, top = dp(10)))
-            val e = EditText(this).apply { setText(value); inputType = type; setSingleLine() }
-            box.addView(e)
-            return e
-        }
-        val owner = field("Konto GitHub", prefs.owner, InputType.TYPE_CLASS_TEXT)
-        val topic = field("Temat (topic) repo z apkami", prefs.topic, InputType.TYPE_CLASS_TEXT)
-        val token = field("Token GitHub (opcjonalnie — prywatne repo, wyższy limit)", prefs.token,
-            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
-        val hours = field("Sprawdzaj w tle co ile godzin (0 = nie sprawdzaj)", prefs.intervalHours.toString(),
-            InputType.TYPE_CLASS_NUMBER)
-        val pin = field("PIN uruchomienia (maks. 6 cyfr; puste = bez blokady)", prefs.pin,
-            InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD)
-        box.addView(text(13f, 0xFF78909C.toInt()).apply {
-            text = "Wersja ${packageManager.getPackageInfo(packageName, 0).versionName}"
-        }, lp(-1, -2, top = dp(12)))
+    // ---------------------------------------------------------------- ustawienia
 
-        fun save(): Boolean {
-            val newPin = pin.text.toString()
-            if (newPin.length > 6 || newPin.any { it !in '0'..'9' }) {
-                pin.error = "PIN może zawierać maksymalnie 6 cyfr"
-                pin.requestFocus()
-                return false
-            }
-            val changed = owner.text.toString().trim() != prefs.owner ||
-                topic.text.toString().trim().lowercase() != prefs.topic ||
-                token.text.toString().trim() != prefs.token
-            prefs.owner = owner.text.toString()
-            prefs.topic = topic.text.toString()
-            prefs.token = token.text.toString()
-            prefs.intervalHours = hours.text.toString().toIntOrNull() ?: 6
-            prefs.pin = newPin
-            App.schedule(this)
-            if (changed) { items = emptyList(); warning = null; refresh() } else render()
-            return true
+    /** Źródła zmienione w ustawieniach — po zamknięciu odśwież listę. */
+    private var sourcesDirty = false
+
+    /**
+     * Okno z listą pozycji przebudowywaną po każdej zmianie ([fill] dostaje kontener).
+     * Fokus wraca na pozycję o tym samym tagu.
+     */
+    private fun listPanel(title: String, onClose: () -> Unit = {}, fill: (LinearLayout, () -> Unit) -> Unit): Dialog {
+        lateinit var col: LinearLayout
+        lateinit var refill: () -> Unit
+        val dlg = TvPanel.show(this, title, listOf(TvPanel.Btn("Zamknij")), widthFrac = 0.62f) { ctx, _ ->
+            col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+            ScrollView(ctx).apply { addView(col) }
         }
-        lateinit var dialog: android.app.Dialog
-        dialog = TvPanel.show(this, "Ustawienia", listOf(
-            TvPanel.Btn("Zapisz", closeOnClick = false) { if (save()) dialog.dismiss() },
-            TvPanel.Btn("Anuluj"),
-        ), widthFrac = 0.62f) { _, _ -> ScrollView(this).apply { addView(box) } }
+        refill = {
+            val tag = dlg.currentFocus?.tag as? String
+            col.removeAllViews()
+            fill(col, refill)
+            val target = tag?.let { col.findViewWithTag<View>(it) }
+                ?: (0 until col.childCount).map { col.getChildAt(it) }.firstOrNull { it.isFocusable }
+            target?.requestFocus()
+        }
+        refill()
+        dlg.setOnDismissListener { onClose() }
+        TvPanel.limitHeight(this, dlg, 0.62f)
+        return dlg
     }
+
+    private fun add(col: LinearLayout, tag: String, label: String, value: String, onOk: () -> Unit) {
+        val it = TvPanel.item(this, label, value, onOk)
+        it.view.tag = tag
+        col.addView(it.view, TvPanel.itemLp(this))
+    }
+
+    private fun intervalLabel(h: Int) = when (h) {
+        0 -> "wyłączone"
+        1 -> "co godzinę"
+        else -> "co $h h"
+    }
+
+    private fun settings() {
+        sourcesDirty = false
+        listPanel("Ustawienia", onClose = { afterSettings() }) { col, refill ->
+            col.addView(TvPanel.section(this, "Repozytoria"))
+            for (s in prefs.sources) {
+                val value = "kanał: ${channelLabel(s)}  ·  token: ${if (s.token.isNotEmpty()) "ustawiony" else "brak"}"
+                add(col, "src:${s.id}", sourceLabel(s), value) { editSource(s.id, refill) }
+            }
+            add(col, "add", "+ Dodaj repo", "konto GitHub albo pojedyncze repo") {
+                addSource { id -> refill(); editSource(id, refill) }
+            }
+
+            col.addView(TvPanel.section(this, "Sprawdzanie"))
+            add(col, "interval", "Sprawdzaj w tle", intervalLabel(prefs.intervalHours)) {
+                val opts = (listOf(0, 1, 2, 3, 6, 12, 24, 48) + prefs.intervalHours).distinct().sorted()
+                TvPanel.choose(this, "Sprawdzaj w tle", opts.map { intervalLabel(it) }, opts.indexOf(prefs.intervalHours)) { i ->
+                    prefs.intervalHours = opts[i]
+                    App.schedule(this)
+                    refill()
+                }
+            }
+
+            col.addView(TvPanel.section(this, "Bezpieczeństwo"))
+            val pin = prefs.pin
+            add(col, "pin", "PIN uruchomienia",
+                if (pin.isEmpty()) "brak — aplikacja otwiera się bez PIN-u" else "ustawiony (${pin.length} cyfr)") {
+                if (pin.isEmpty()) setPin(refill)
+                else TvPanel.choose(this, "PIN uruchomienia", listOf("Zmień PIN", "Usuń PIN"), 0) { i ->
+                    if (i == 0) setPin(refill) else { prefs.pin = ""; refill() }
+                }
+            }
+
+            col.addView(text(13f, 0xFF78909C.toInt()).apply {
+                text = "Wersja ${packageManager.getPackageInfo(packageName, 0).versionName}"
+                setPadding(dp(4), dp(16), dp(4), 0)
+            })
+        }
+    }
+
+    private fun afterSettings() {
+        if (!sourcesDirty) { render(); return }
+        sourcesDirty = false
+        val ids = prefs.sources.map { it.id }.toSet()
+        items = items.filter { it.source in ids }
+        if (current != null && current !in ids) current = null
+        if (current == null && ids.size == 1) current = ids.first()
+        render()
+        refresh(all = true)
+    }
+
+    private fun setPin(done: () -> Unit) {
+        val type = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        val check: (String) -> String? = { v ->
+            if (v.isEmpty() || v.length > 6 || v.any { it !in '0'..'9' }) "PIN: od 1 do 6 cyfr" else null
+        }
+        TvPanel.input(this, "Nowy PIN", "", "Od 1 do 6 cyfr", type, check) { first ->
+            TvPanel.input(this, "Powtórz PIN", "", "", type, { v -> if (v != first) "PIN-y się różnią" else null }) {
+                prefs.pin = first
+                toast("PIN ustawiony")
+                done()
+            }
+        }
+    }
+
+    private fun specCheck(v: String, selfId: String?): String? {
+        val n = Source.normSpec(v) ?: return "Wpisz konto (np. JarDol) albo repo (np. JarDol/e2stream)"
+        if (prefs.sources.any { it.id != selfId && it.spec.equals(n, ignoreCase = true) }) return "To repo jest już podpięte"
+        return null
+    }
+
+    private fun addSource(onAdded: (String) -> Unit) {
+        TvPanel.input(this, "Dodaj repo", "",
+            "Konto GitHub (wszystkie jego repo z tematem) albo pojedyncze repo: właściciel/nazwa. Można wkleić adres z github.com.",
+            validate = { specCheck(it, null) }) { v ->
+            val s = prefs.addSource(Source.normSpec(v)!!)
+            sourcesDirty = true
+            onAdded(s.id)
+        }
+    }
+
+    private fun editSource(id: String, parentRefill: () -> Unit) {
+        val start = prefs.source(id) ?: return
+        listPanel("Repo: ${start.spec}", onClose = { parentRefill() }) { col, refill ->
+            val s = prefs.source(id) ?: return@listPanel
+            /** [reload] = zmiana wymaga ponownego pobrania listy (kanał — nie, oba są już pobrane). */
+            fun save(n: Source, reload: Boolean = true) { prefs.updateSource(n); if (reload) sourcesDirty = true; refill() }
+            add(col, "spec", "Konto lub repo", s.spec + if (s.isRepo) "  (pojedyncze repo)" else "  (konto)") {
+                TvPanel.input(this, "Konto lub repo", s.spec, "np. JarDol albo JarDol/e2stream",
+                    validate = { specCheck(it, s.id) }) { v -> save(s.copy(spec = Source.normSpec(v)!!, blockedUntil = 0)) }
+            }
+            if (!s.isRepo) add(col, "topic", "Temat (topic) repo z apkami", s.topic) {
+                TvPanel.input(this, "Temat repo z apkami", s.topic, "Pokazywane są repo konta oznaczone tym tematem",
+                    validate = { if (it.isBlank()) "Temat nie może być pusty" else null }) { v ->
+                    save(s.copy(topic = v.trim().lowercase()))
+                }
+            }
+            add(col, "token", "Token GitHub",
+                if (s.token.isNotEmpty()) "ustawiony" else "brak — tylko publiczne repo, limit 60 zapytań/h") {
+                TvPanel.input(this, "Token GitHub", s.token,
+                    "Dla prywatnych repo i wyższego limitu (5000/h). Puste pole = bez tokena.",
+                    InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD) { v ->
+                    save(s.copy(token = v.trim(), blockedUntil = 0))
+                }
+            }
+            add(col, "channel", "Kanał (dla wszystkich apek z tego repo)", channelLabel(s)) {
+                TvPanel.choose(this, "Kanał", listOf("Stable — tylko wydania stabilne", "Beta — najnowsze wydanie (także beta)"),
+                    if (s.isBeta) 1 else 0) { i -> save(s.copy(channel = if (i == 1) AppItem.BETA else AppItem.STABLE), reload = false) }
+            }
+            add(col, "remove", "Usuń repo", "") {
+                TvPanel.confirm(this, "Usuń repo", "Odpiąć ${s.spec}? Zainstalowane apki zostają.", "Usuń") {
+                    prefs.removeSource(s.id)
+                    sourcesDirty = true
+                    currentPanel?.dismiss()
+                }
+            }
+        }.also { currentPanel = it }
+    }
+
+    private var currentPanel: Dialog? = null
 }

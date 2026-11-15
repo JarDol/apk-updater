@@ -13,14 +13,13 @@ class CheckWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) 
     override fun doWork(): Result {
         val ctx = applicationContext
         val p = Prefs(ctx)
+        // błąd / limit jednego źródła nie przerywa pozostałych (Catalog zostawia jego ostatnie dane)
         val items = try {
             Catalog.refresh(ctx)
-        } catch (_: RateLimitException) {
-            return Result.success()   // limit GitHub — następne sprawdzenie wg harmonogramu
         } catch (_: Exception) {
             return Result.retry()
         }
-        val updates = Catalog.tracked(items).filter { it.hasUpdate }
+        val updates = Catalog.tracked(items, p.sources).filter { it.hasUpdate }
         val manual = ArrayList<AppItem>()
         // Siebie aktualizujemy na końcu — instalacja nowej wersji kończy ten proces.
         for (item in updates.sortedBy { it.pkg == ctx.packageName }) {

@@ -30,9 +30,11 @@ data class AppItem(
     val appAuto: Boolean? = null,
     /** Ekran, na którym wpis jest pokazywany: [STABLE] albo [BETA] (najnowsza wersja, także beta). */
     val channel: String = STABLE,
+    /** Id źródła ([Source]), z którego pochodzi wpis. */
+    val source: String = "",
 ) {
-    /** Unikalny klucz wiersza (w jednym repo może być kilka apek); wspólny dla obu ekranów. */
-    val key get() = "$repo#$pkg#$name"
+    /** Unikalny klucz wiersza (w jednym repo może być kilka apek); wspólny dla obu kanałów. */
+    val key get() = "$source|$repo#$pkg#$name"
     val isInstalled get() = installed != null
     val hasUpdate get() = isInstalled && apkUrl != null && Ver.newer(latest, installed)
     val canInstall get() = pkg.isNotEmpty() && apkUrl != null
@@ -42,7 +44,7 @@ data class AppItem(
         .put("latest", latest).put("apkName", apkName).put("apkUrl", apkUrl)
         .put("apkApiUrl", apkApiUrl).put("notes", notes).put("error", error).put("prerelease", prerelease)
         .put("selfUpdate", selfUpdate).put("tagPrefix", tagPrefix).put("assetPattern", assetPattern)
-        .put("releaseConfigLoaded", releaseConfigLoaded).put("channel", channel)
+        .put("releaseConfigLoaded", releaseConfigLoaded).put("channel", channel).put("source", source)
 
     companion object {
         const val STABLE = "stable"
@@ -59,6 +61,7 @@ data class AppItem(
             assetPattern = o.optStringOrNull("assetPattern"),
             releaseConfigLoaded = o.optBoolean("releaseConfigLoaded"),
             channel = o.optString("channel", STABLE),
+            source = o.optString("source"),
         )
     }
 }
@@ -67,32 +70,90 @@ fun JSONObject.optStringOrNull(k: String): String? =
     if (isNull(k) || !has(k)) null else optString(k).takeIf { it.isNotEmpty() }
 
 /**
- * Lista apek: wszystkie repo konta [Prefs.owner] z tematem [Prefs.topic].
+ * Lista apek z podpiętych źródeł ([Prefs.sources]): konto z tematem albo pojedyncze repo.
  * W każdym repo plik updater.json:  {"name": "...", "package": "...", "asset": "regex (opcjonalnie)"}
  * Dla każdej apki powstają dwa wpisy: stable (najnowsze wydanie bez prerelease) i beta
  * (najnowsze wydanie w ogóle — prerelease albo stable, zależnie od tego, co nowsze).
+ * Który z nich jest pokazywany i śledzony w tle, decyduje kanał źródła.
  */
 object Catalog {
 
-    fun forChannel(items: List<AppItem>, channel: String) = items.filter { it.channel == channel }
+    /** Wpisy źródła w jego kanale. */
+    fun forSource(items: List<AppItem>, src: Source) =
+        items.filter { it.source == src.id && it.channel == src.channel }
 
-    /** Do pracy w tle: apka zainstalowana jako beta śledzi betę, pozostałe — stable. */
-    fun tracked(items: List<AppItem>) = items.filter {
-        it.channel == if (it.installed?.contains('-') == true) AppItem.BETA else AppItem.STABLE
+    /** Do pracy w tle: każde źródło w swoim kanale; ta sama apka z kilku źródeł — raz (najnowsza wersja). */
+    fun tracked(items: List<AppItem>, sources: List<Source>): List<AppItem> {
+        val all = sources.flatMap { forSource(items, it) }
+        val byPkg = LinkedHashMap<String, AppItem>()
+        for (it in all) {
+            if (it.pkg.isEmpty() || it.apkUrl == null) continue
+            val cur = byPkg[it.pkg]
+            if (cur == null || Ver.newer(it.latest, cur.latest)) byPkg[it.pkg] = it
+        }
+        return byPkg.values.toList()
     }
 
-    /** Pobiera świeżą listę z GitHuba (sieć — poza wątkiem UI). */
-    fun refresh(ctx: Context): List<AppItem> {
+    /**
+     * Pobiera świeżą listę z GitHuba (sieć — poza wątkiem UI). [only] = id jednego źródła.
+     * Błąd lub limit jednego źródła nie przerywa pozostałych — zostają jego ostatnie dane,
+     * a komunikat trafia do [Prefs.sourceErrors].
+     */
+    fun refresh(ctx: Context, only: String? = null): List<AppItem> {
         val p = Prefs(ctx)
-        val blocked = p.blockedUntil
-        if (blocked > System.currentTimeMillis()) throw RateLimitException(403, Http.rateMsg(blocked), blocked)
-        val token = p.token
-        val owner = p.owner
+        val sources = p.sources
+        val old = savedItems(p)
+        val errors = p.sourceErrors.filterKeys { id -> sources.any { it.id == id } }.toMutableMap()
+        val out = ArrayList<AppItem>()
+        for (src in sources) {
+            if (only != null && src.id != only) { out += old.filter { it.source == src.id }; continue }
+            val keep = old.filter { it.source == src.id }
+            if (src.blockedUntil > System.currentTimeMillis()) {
+                errors[src.id] = Http.rateMsg(src.blockedUntil)
+                out += keep
+                continue
+            }
+            try {
+                val fresh = readSource(ctx, src).map { it.copy(source = src.id) }.toMutableList()
+                // chwilowy błąd jednego repo nie kasuje ostatnich dobrych danych
+                val prevByKey = keep.associateBy { it.key + "|" + it.channel }
+                for (i in fresh.indices) {
+                    val cur = fresh[i]
+                    val prev = prevByKey[cur.key + "|" + cur.channel]
+                    if (cur.apkUrl == null && cur.error != null && prev != null && prev.error == null) fresh[i] = prev
+                }
+                out += fresh
+                errors.remove(src.id)
+            } catch (e: RateLimitException) {
+                p.setBlocked(src.id, e.resetAt)
+                errors[src.id] = e.message ?: "Limit zapytań GitHub"
+                out += keep
+            } catch (e: Exception) {
+                errors[src.id] = "Błąd: ${e.message}"
+                out += keep
+            }
+        }
+        val order = sources.withIndex().associate { it.value.id to it.index }
+        out.sortWith(compareBy<AppItem>({ order[it.source] ?: 999 }, { it.pkg != BuildConfigPkg.SELF },
+            { it.name.lowercase() }, { it.channel }))
+        p.catalogJson = JSONArray().apply { out.forEach { put(it.toJson()) } }.toString()
+        p.sourceErrors = errors
+        p.lastCheck = System.currentTimeMillis()
+        return withInstalled(ctx, out)
+    }
+
+    /** Wszystkie apki jednego źródła. */
+    private fun readSource(ctx: Context, src: Source): List<AppItem> {
+        val token = src.token
+        if (src.isRepo) {
+            val r = JSONObject(Http.get(ctx, "https://api.github.com/repos/${src.spec}", token))
+            return readRepo(ctx, r.getString("full_name"), r.optString("default_branch", "main"), r.optString("name"), token)
+        }
+        val owner = src.owner
         val reposUrl = if (token.isNotEmpty())
-            "https://api.github.com/user/repos?per_page=100&affiliation=owner"
+            "https://api.github.com/user/repos?per_page=100&affiliation=owner,organization_member"
         else
             "https://api.github.com/users/$owner/repos?per_page=100&type=owner"
-
         val repos = JSONArray(Http.get(ctx, reposUrl, token))
         val out = ArrayList<AppItem>()
         for (i in 0 until repos.length()) {
@@ -101,20 +162,10 @@ object Catalog {
             val full = r.getString("full_name")
             if (!full.substringBefore('/').equals(owner, ignoreCase = true)) continue
             val topics = r.optJSONArray("topics") ?: continue
-            if ((0 until topics.length()).none { topics.optString(it) == p.topic }) continue
+            if ((0 until topics.length()).none { topics.optString(it) == src.topic }) continue
             out.addAll(readRepo(ctx, full, r.optString("default_branch", "main"), r.optString("name"), token))
         }
-        // chwilowy błąd jednego repo nie kasuje ostatnich dobrych danych
-        val old = savedItems(p).associateBy { it.key + "|" + it.channel }
-        for (i in out.indices) {
-            val cur = out[i]
-            val prev = old[cur.key + "|" + cur.channel]
-            if (cur.apkUrl == null && cur.error != null && prev != null && prev.error == null) out[i] = prev
-        }
-        out.sortWith(compareBy<AppItem>({ it.pkg != BuildConfigPkg.SELF }, { it.name.lowercase() }, { it.channel }))
-        p.catalogJson = JSONArray().apply { out.forEach { put(it.toJson()) } }.toString()
-        p.lastCheck = System.currentTimeMillis()
-        return withInstalled(ctx, out)
+        return out
     }
 
     private fun savedItems(p: Prefs): List<AppItem> {
@@ -122,7 +173,10 @@ object Catalog {
         if (s.isEmpty()) return emptyList()
         return try {
             val a = JSONArray(s)
+            val first = p.sources.firstOrNull()?.id ?: ""
+            // wpisy z wersji sprzed wielu repo nie mają źródła — należą do pierwszego (przeniesionego) źródła
             (0 until a.length()).map { AppItem.fromJson(a.getJSONObject(it)) }
+                .map { if (it.source.isEmpty()) it.copy(source = first) else it }
         } catch (_: Exception) { emptyList() }
     }
 
@@ -132,11 +186,16 @@ object Catalog {
     /** Dostępne wydania danej apki (sieć — poza wątkiem UI). */
     fun releasesFor(ctx: Context, item: AppItem): List<AppItem> {
         val p = Prefs(ctx)
-        if (p.blockedUntil > System.currentTimeMillis()) {
-            throw RateLimitException(403, Http.rateMsg(p.blockedUntil), p.blockedUntil)
+        val src = p.source(item.source)
+        if (src != null && src.blockedUntil > System.currentTimeMillis()) {
+            throw RateLimitException(403, Http.rateMsg(src.blockedUntil), src.blockedUntil)
         }
         check(item.releaseConfigLoaded) { "Odśwież listę apek przed wyborem wydania" }
-        val list = JSONArray(Http.get(ctx, "https://api.github.com/repos/${item.repo}/releases?per_page=100", p.token))
+        val list = try {
+            JSONArray(Http.get(ctx, "https://api.github.com/repos/${item.repo}/releases?per_page=100", src?.token ?: ""))
+        } catch (e: RateLimitException) {
+            p.setBlocked(item.source, e.resetAt); throw e
+        }
         val assetRe = item.assetPattern?.let { pattern -> try { Regex(pattern) } catch (_: Exception) { null } }
         val out = ArrayList<AppItem>()
         for (i in 0 until list.length()) {
@@ -147,6 +206,7 @@ object Catalog {
             out += cand.copy(
                 selfUpdate = item.selfUpdate,
                 channel = item.channel,
+                source = item.source,
                 installed = item.installed,
                 installedCode = item.installedCode,
                 appAuto = item.appAuto,

@@ -12,8 +12,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.widget.Button
+import android.widget.EditText
 import android.widget.GridLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 
 /**
@@ -75,6 +77,112 @@ object TvPanel {
         if (focusButton && f != null) f.requestFocus() else body.requestFocus()
         return dlg
     }
+
+    /** Pozycja listy (ustawienia, repo): etykieta i wartość pod spodem; zmiana dopiero po OK. */
+    class Item(val view: LinearLayout, val title: TextView, val value: TextView)
+
+    fun item(ctx: Context, label: String, value: String = "", onOk: () -> Unit): Item {
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            isFocusable = true
+            isClickable = true
+            setBackgroundResource(R.drawable.item_bg)
+            setPadding(dp(ctx, 14), dp(ctx, 10), dp(ctx, 14), dp(ctx, 10))
+            setOnClickListener { onOk() }
+        }
+        val t = TextView(ctx).apply { text = label; textSize = 18f; setTextColor(WHITE) }
+        val v = TextView(ctx).apply {
+            text = value; textSize = 15f; setTextColor(GREY); visibility = if (value.isEmpty()) View.GONE else View.VISIBLE
+        }
+        row.addView(t); row.addView(v)
+        return Item(row, t, v)
+    }
+
+    fun setValue(i: Item, value: String) {
+        i.value.text = value
+        i.value.visibility = if (value.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    fun section(ctx: Context, label: String) = TextView(ctx).apply {
+        text = label; textSize = 15f; setTextColor(BLUE)
+        setPadding(dp(ctx, 4), dp(ctx, 16), dp(ctx, 4), dp(ctx, 4))
+    }
+
+    fun itemLp(ctx: Context) = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        .apply { topMargin = dp(ctx, 6) }
+
+    /** Lista do wyboru jednej pozycji (bieżąca oznaczona ●); WSTECZ / Anuluj = bez zmian. */
+    fun choose(a: Activity, title: String, options: List<String>, selected: Int, onPick: (Int) -> Unit): Dialog {
+        var focus: View? = null
+        val dlg = show(a, title, listOf(Btn("Anuluj")), widthFrac = 0.5f) { ctx, d ->
+            val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+            options.forEachIndexed { i, label ->
+                val it = item(ctx, (if (i == selected) "● " else "   ") + label) { d.dismiss(); onPick(i) }
+                col.addView(it.view, itemLp(ctx))
+                if (i == selected || focus == null) focus = it.view
+            }
+            ScrollView(ctx).apply { addView(col) }
+        }
+        focus?.requestFocus()
+        return dlg
+    }
+
+    /** Wpisanie tekstu: OK zapisuje (jeśli [validate] zwróci null), Anuluj — bez zmian. */
+    fun input(
+        a: Activity, title: String, value: String, hint: String = "", type: Int = android.text.InputType.TYPE_CLASS_TEXT,
+        validate: (String) -> String? = { null }, onOk: (String) -> Unit,
+    ): Dialog {
+        lateinit var edit: EditText
+        lateinit var dlg: Dialog
+        fun save() {
+            val v = edit.text.toString()
+            val err = validate(v)
+            if (err != null) { edit.error = err; edit.requestFocus(); return }
+            dlg.dismiss(); onOk(v)
+        }
+        dlg = show(a, title, listOf(Btn("OK", closeOnClick = false) { save() }, Btn("Anuluj")), widthFrac = 0.6f) { ctx, _ ->
+            val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+            if (hint.isNotEmpty()) col.addView(TextView(ctx).apply {
+                text = hint; textSize = 14f; setTextColor(GREY); setPadding(dp(ctx, 4), 0, dp(ctx, 4), dp(ctx, 8))
+            })
+            edit = EditText(ctx).apply {
+                setText(value); setSelection(value.length); inputType = type; setSingleLine()
+                setTextColor(WHITE); textSize = 18f
+                imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                setOnEditorActionListener { _, _, _ -> save(); true }
+            }
+            col.addView(edit)
+            col
+        }
+        edit.requestFocus()
+        return dlg
+    }
+
+    /** Tekst do przeczytania (przewijany) z przyciskami. */
+    fun message(a: Activity, title: String, msg: String, buttons: List<Btn> = listOf(Btn("OK")), widthFrac: Float = 0.62f): Dialog =
+        show(a, title, buttons, widthFrac = widthFrac, focusButton = true) { ctx, _ ->
+            ScrollView(ctx).apply {
+                isFocusable = true
+                addView(TextView(ctx).apply {
+                    text = msg; textSize = 16f; setTextColor(WHITE); setPadding(dp(ctx, 4), 0, dp(ctx, 4), 0)
+                })
+                layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            }
+        }.also { d -> limitHeight(a, d, widthFrac) }
+
+    /** Długa treść nie może wypchnąć przycisków poza ekran: okno maks. 85% wysokości. */
+    fun limitHeight(a: Activity, d: Dialog, widthFrac: Float) {
+        val w = d.window ?: return
+        val dm = a.resources.displayMetrics
+        w.decorView.post {
+            val max = (dm.heightPixels * 0.85f).toInt()
+            if (w.decorView.height > max) w.setLayout((dm.widthPixels * widthFrac).toInt(), max)
+        }
+    }
+
+    /** Pytanie tak / nie. */
+    fun confirm(a: Activity, title: String, msg: String, ok: String, cancel: String = "Anuluj", onOk: () -> Unit): Dialog =
+        message(a, title, msg, listOf(Btn(ok) { onOk() }, Btn(cancel)))
 
     /**
      * Blokada PIN (jak w E2Stream). Wpisywanie bez klawiatury systemowej:

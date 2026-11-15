@@ -49,15 +49,16 @@ Wzór: `UpdateInfoProvider.kt` w E2Stream (`JarDol/enigma2-epgscan`, katalog `e2
 
 ## Działanie
 
-- Lista: repo konta `JarDol` z tematem `android-app` (konto i temat można zmienić w ustawieniach).
-- Dwa ekrany (przyciski `Stable` i `Beta` u góry): `Stable` pokazuje tylko wydania bez prerelease, `Beta` – najnowszą wersję apki (prerelease albo stable, co nowsze). Każdą apkę aktualizujesz osobno, więc beta dla jednej nie wpływa na pozostałe. „Aktualizuj” pojawia się tylko, gdy dostępna wersja jest nowsza od zainstalowanej.
+- Ekran główny: lista podpiętych repo. Źródłem może być konto GitHub (wszystkie jego repo z tematem, domyślnie `JarDol` + `android-app`) albo pojedyncze repo (`właściciel/nazwa`). Po wejściu w repo — jego apki; WSTECZ wraca do listy. Przy jednym repo apki pokazują się od razu.
+- Każde repo ma własny token (prywatne repo, wyższy limit) i własny kanał: `Stable` (tylko wydania bez prerelease) albo `Beta` (najnowsze wydanie, także prerelease) — wspólny dla wszystkich apek z tego repo. Kanał zmienisz przyciskiem `Kanał` na liście apek albo w ustawieniach repo.
+- „Aktualizuj” pojawia się tylko, gdy dostępna wersja jest nowsza od zainstalowanej.
 - Przycisk `Wersje` pozwala ręcznie wybrać dowolne pasujące wydanie z GitHuba, także starsze, zarówno dla zainstalowanej, jak i niezainstalowanej apki. Wybór ten nie zmienia automatycznych aktualizacji.
-- W ustawieniach można ustawić PIN uruchomienia (do 6 cyfr); pusty PIN wyłącza blokadę. Po opuszczeniu aplikacji ponowne wejście wymaga PIN-u. Sprawdzanie aktualizacji w tle działa niezależnie od blokady.
+- Ustawienia mają sekcje: Repozytoria (dodawanie, edycja, usuwanie repo), Sprawdzanie (co ile godzin w tle) i Bezpieczeństwo (PIN uruchomienia, do 6 cyfr, wpisywany dwa razy). Każdą pozycję zmieniasz dopiero po naciśnięciu OK. Po opuszczeniu aplikacji ponowne wejście wymaga PIN-u. Sprawdzanie w tle działa niezależnie od blokady.
 - Przy instalacji starszej wersji Android może ją zablokować. Wtedy może być konieczne odinstalowanie obecnej wersji i ponowna instalacja; odinstalowanie może usunąć dane apki. Starsza wersja może też nie obsłużyć danych nowszej.
-- Sprawdzanie w tle i „Auto” trzymają się ścieżki, na której apka jest zainstalowana: wersja beta (`-beta.N`) śledzi betę, pozostałe – stable.
+- Sprawdzanie w tle i „Auto” śledzą kanał repo. Ta sama apka podpięta z kilku repo jest aktualizowana raz, do najnowszej wersji. Apki z własną aktualizacją (`selfUpdate`) i tak aktualizują się wg swoich ustawień.
 - „Auto: wł” – apka bez własnej aktualizacji aktualizowana automatycznie przy sprawdzaniu w tle
   (domyślnie tylko sam aktualizator). Apki z `selfUpdate` – wg własnego ustawienia (wyżej).
-- Limit zapytań GitHub (60/h bez tokena): po jego wyczerpaniu lista zostaje z ostatnich danych, a ostrzeżenie pokazuje, za ile się odnowi; do tego czasu aplikacja nie odpytuje GitHuba. Token w ustawieniach podnosi limit do 5000/h.
+- Limit zapytań GitHub (60/h bez tokena) liczony jest osobno dla każdego repo: po jego wyczerpaniu to repo zostaje z ostatnimi danymi i pokazuje, za ile limit się odnowi, a pozostałe działają dalej. Token podnosi limit do 5000/h.
 - Sprawdzanie w tle co 6 h (do zmiany w ustawieniach), powiadomienie o nowych wersjach.
 - Android 12+: aktualizacje apek zainstalowanych przez aktualizator idą bez pytania.
   Starsze systemy (np. Mi Box) zawsze pokażą systemowe okno „Zainstaluj”.
