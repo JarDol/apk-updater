@@ -113,49 +113,9 @@ class MainActivity : Activity() {
 
     private fun dp(v: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
 
+    /** Blokada PIN jak w E2Stream: strzałki, cyfry z pilota, klawiatura na ekranie pod przytrzymanym OK. */
     private fun showPin() {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(24), dp(12), dp(24), dp(12))
-        }
-        val entered = PinEntry(prefs.pin)
-        val info = text(18f, Color.WHITE).apply { text = "Wprowadź PIN" }
-        val grid = GridLayout(this).apply { columnCount = 3 }
-        box.addView(info)
-        box.addView(grid, lp(-2, -2, top = dp(12)))
-        val dialog = AlertDialog.Builder(this).setTitle("APK Updater zablokowany")
-            .setView(box).setNegativeButton("Wyjdź") { _, _ -> finish() }
-            .setCancelable(false).create()
-        fun digit(d: Int) {
-            when (entered.add(d)) {
-                PinEntry.Result.MATCH -> {
-                    dialog.dismiss()
-                    unlock()
-                }
-                PinEntry.Result.WRONG -> {
-                    info.text = "Błędny PIN — spróbuj ponownie"
-                }
-                PinEntry.Result.INCOMPLETE -> info.text = "•".repeat(entered.length)
-            }
-        }
-        for (d in 1..9) grid.addView(button(d.toString()) { digit(d) })
-        grid.addView(button("Usuń") {
-            entered.delete()
-            info.text = if (entered.length == 0) "Wprowadź PIN" else "•".repeat(entered.length)
-        })
-        grid.addView(button("0") { digit(0) })
-        dialog.setOnKeyListener { _, key, event ->
-            if (event.action == KeyEvent.ACTION_DOWN && key in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
-                digit(key - KeyEvent.KEYCODE_0)
-                true
-            } else if (event.action == KeyEvent.ACTION_DOWN && key == KeyEvent.KEYCODE_BACK) {
-                finish()
-                true
-            } else false
-        }
-        dialog.show()
-        grid.getChildAt(0).requestFocus()
+        TvPanel.askPin(this, prefs.pin, "APK Updater zablokowany", onCancel = { finish() }) { unlock() }
     }
 
     private fun text(size: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
@@ -523,32 +483,29 @@ class MainActivity : Activity() {
             text = "Wersja ${packageManager.getPackageInfo(packageName, 0).versionName}"
         }, lp(-1, -2, top = dp(12)))
 
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Ustawienia")
-            .setView(ScrollView(this).apply { addView(box) })
-            .setPositiveButton("Zapisz", null)
-            .setNegativeButton("Anuluj", null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val newPin = pin.text.toString()
-                if (newPin.length > 6 || newPin.any { it !in '0'..'9' }) {
-                    pin.error = "PIN może zawierać maksymalnie 6 cyfr"
-                    return@setOnClickListener
-                }
-                val changed = owner.text.toString().trim() != prefs.owner ||
-                    topic.text.toString().trim().lowercase() != prefs.topic ||
-                    token.text.toString().trim() != prefs.token
-                prefs.owner = owner.text.toString()
-                prefs.topic = topic.text.toString()
-                prefs.token = token.text.toString()
-                prefs.intervalHours = hours.text.toString().toIntOrNull() ?: 6
-                prefs.pin = newPin
-                App.schedule(this)
-                if (changed) { items = emptyList(); warning = null; refresh() } else render()
-                dialog.dismiss()
+        fun save(): Boolean {
+            val newPin = pin.text.toString()
+            if (newPin.length > 6 || newPin.any { it !in '0'..'9' }) {
+                pin.error = "PIN może zawierać maksymalnie 6 cyfr"
+                pin.requestFocus()
+                return false
             }
+            val changed = owner.text.toString().trim() != prefs.owner ||
+                topic.text.toString().trim().lowercase() != prefs.topic ||
+                token.text.toString().trim() != prefs.token
+            prefs.owner = owner.text.toString()
+            prefs.topic = topic.text.toString()
+            prefs.token = token.text.toString()
+            prefs.intervalHours = hours.text.toString().toIntOrNull() ?: 6
+            prefs.pin = newPin
+            App.schedule(this)
+            if (changed) { items = emptyList(); warning = null; refresh() } else render()
+            return true
         }
-        dialog.show()
+        lateinit var dialog: android.app.Dialog
+        dialog = TvPanel.show(this, "Ustawienia", listOf(
+            TvPanel.Btn("Zapisz", closeOnClick = false) { if (save()) dialog.dismiss() },
+            TvPanel.Btn("Anuluj"),
+        ), widthFrac = 0.62f) { _, _ -> ScrollView(this).apply { addView(box) } }
     }
 }

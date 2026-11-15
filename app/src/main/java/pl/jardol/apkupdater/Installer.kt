@@ -70,8 +70,26 @@ object Installer {
         install(ctx, apk, item)
     }
 
+    /**
+     * Pobrane APK nie zostają w pamięci podręcznej (każda wersja ma inną nazwę, ~100 MB każda):
+     * usuwane pliki starsze niż [minAgeMs] (domyślnie 10 min — nie ten, który właśnie się instaluje).
+     */
+    fun cleanup(ctx: Context, minAgeMs: Long = 10 * 60_000L): Long {
+        val dir = File(ctx.cacheDir, "apk")
+        val now = System.currentTimeMillis()
+        var freed = 0L
+        dir.listFiles()?.forEach { f ->
+            if (f.isFile && now - f.lastModified() > minAgeMs) {
+                val n = f.length()
+                if (f.delete()) freed += n
+            }
+        }
+        return freed
+    }
+
     fun download(ctx: Context, item: AppItem, progress: (Int) -> Unit): File {
         val token = Prefs(ctx).token
+        cleanup(ctx)
         val dir = File(ctx.cacheDir, "apk").apply { mkdirs() }
         val out = File(dir, item.apkName ?: "${item.pkg}.apk")
         val tmp = File(dir, out.name + ".part").apply { delete() }

@@ -35,6 +35,7 @@ class InstallReceiver : BroadcastReceiver() {
                 App.post(pkg, null)
             }
             else -> {
+                file?.let { File(it).delete() }     // nieudana / anulowana instalacja — plik nie zostaje w pamięci
                 val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
                 val downgradeBlocked = msg?.contains("VERSION_DOWNGRADE", ignoreCase = true) == true ||
                     msg?.contains("version downgrade", ignoreCase = true) == true
