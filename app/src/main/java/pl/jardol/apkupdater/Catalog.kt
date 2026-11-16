@@ -28,6 +28,8 @@ data class AppItem(
     val installedCode: Long = -1,
     /** Dla [selfUpdate]: ustawienie odczytane z apki (null = apka go nie udostępnia → jak „nie”). */
     val appAuto: Boolean? = null,
+    /** Dla [selfUpdate]: kanał aktualizacji ustawiony w apce (null = nie udostępnia → stabilny). */
+    val appChannel: String? = null,
     /** Ekran, na którym wpis jest pokazywany: [STABLE] albo [BETA] (najnowsza wersja, także beta). */
     val channel: String = STABLE,
     /** Id źródła ([Source]), z którego pochodzi wpis. */
@@ -92,6 +94,19 @@ object Catalog {
             if (cur == null || Ver.newer(it.latest, cur.latest)) byPkg[it.pkg] = it
         }
         return byPkg.values.toList()
+    }
+
+    /**
+     * Wydanie do automatycznej instalacji: apka z własną aktualizacją — z kanału ustawionego w apce
+     * (brak = stabilny), niezależnie od kanału źródła w APK Updaterze; pozostałe — wpis z kanału źródła.
+     * null — nic do zainstalowania automatycznie.
+     */
+    fun autoTarget(items: List<AppItem>, item: AppItem): AppItem? {
+        if (!item.selfUpdate) return item.takeIf { it.hasUpdate }
+        val wanted = item.appChannel ?: AppItem.STABLE
+        val t = if (item.channel == wanted) item
+            else items.firstOrNull { it.source == item.source && it.pkg == item.pkg && it.repo == item.repo && it.channel == wanted }
+        return t?.takeIf { it.hasUpdate }
     }
 
     /**
@@ -238,9 +253,10 @@ object Catalog {
                     installed = pi.versionName ?: "?",
                     installedCode = PackageInfoCompat.getLongVersionCode(pi),
                     appAuto = if (item.selfUpdate) AppAuto.query(ctx, item.pkg) else null,
+                    appChannel = if (item.selfUpdate) AppAuto.queryChannel(ctx, item.pkg) else null,
                 )
             } catch (_: PackageManager.NameNotFoundException) {
-                item.copy(installed = null, installedCode = -1, appAuto = null)
+                item.copy(installed = null, installedCode = -1, appAuto = null, appChannel = null)
             }
         }
     }

@@ -308,7 +308,7 @@ class MainActivity : Activity() {
             val avail = item.latest?.let { "dostępna $it${if (item.prerelease) "  [BETA]" else ""}" } ?: "—"
             val mode = when {
                 !item.selfUpdate || !item.isInstalled -> ""
-                item.appAuto == true -> "  ·  auto: wg apki (tak)"
+                item.appAuto == true -> "  ·  auto: wg apki (tak, ${if (item.appChannel == AppItem.BETA) "beta" else "stabilne"})"
                 item.appAuto == false -> "  ·  auto: wg apki (nie)"
                 else -> "  ·  auto: nie (apka bez ustawienia)"
             }
