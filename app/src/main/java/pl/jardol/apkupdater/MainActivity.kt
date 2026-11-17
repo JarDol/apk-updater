@@ -365,6 +365,12 @@ class MainActivity : Activity() {
                 prefs.setAuto(item.pkg, !prefs.isAuto(item.pkg)); render()
             }.apply { tag = item.key; setTag(R.id.role, "auto") }, lp(-2, -2, left = dp(8)))
         }
+        if (item.isInstalled && !self && item.selfUpdate) {
+            row.addView(button(if (item.key in logsBusy) "…" else "Logi") { saveLogs(item) }.apply {
+                isEnabled = item.key !in logsBusy
+                tag = item.key; setTag(R.id.role, "logs")
+            }, lp(-2, -2, left = dp(8)))
+        }
         if (item.isInstalled && !self && launchIntent(item.pkg) != null) {
             row.addView(button("Otwórz") {
                 launchIntent(item.pkg)?.let { startActivity(it) }
@@ -398,6 +404,33 @@ class MainActivity : Activity() {
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
+
+    private val logsBusy = HashSet<String>()
+
+    /** Logi apki (np. E2Stream) na podłączony dysk — także gdy sama apka się nie otwiera. */
+    private fun saveLogs(item: AppItem) {
+        logsBusy += item.key; render(item.key)
+        io.execute {
+            val msg = try {
+                val files = Logs.list(this, item.pkg)
+                when {
+                    files == null -> "${item.name} nie udostępnia logów — zaktualizuj ją do nowszej wersji."
+                    files.isEmpty() -> "${item.name}: brak plików logu."
+                    else -> {
+                        val where = Logs.save(this, item.pkg, item.name, files)
+                        "Zapisano ${files.size} ${if (files.size == 1) "plik" else "pliki"} logu (${files.sumOf { it.size } / 1024} kB)\n\n$where"
+                    }
+                }
+            } catch (e: Exception) {
+                "Nie udało się zapisać logów: ${e.message ?: e}"
+            }
+            main.post {
+                logsBusy -= item.key
+                render(item.key)
+                TvPanel.message(this, "${item.name} — logi", msg)
+            }
+        }
+    }
 
     // ---------------------------------------------------------------- akcje
 
