@@ -27,6 +27,8 @@ class CheckWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) 
             // apka z własną aktualizacją: tylko wydanie z kanału ustawionego w apce (np. stabilny),
             // nawet gdy w APK Updaterze źródło pokazuje bety
             val target = if (AppAuto.enabled(p, item)) Catalog.autoTarget(items, item) else null
+            // własne ustawienie apki: tryb "tylko powiadomienie" (apka zatrzymana) i wstrzymanie na czas nagrywania
+            if (item.selfUpdate && target != null && !AppAuto.canInstallNow(ctx, item.pkg)) continue
             if (target != null && Installer.canInstall(ctx)) {
                 try {
                     Installer.downloadAndInstall(ctx, target) { }

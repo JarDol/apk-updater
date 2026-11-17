@@ -18,10 +18,35 @@ object AppAuto {
     fun query(ctx: Context, pkg: String): Boolean? = try {
         ctx.contentResolver.query(Uri.parse("content://$pkg.updateinfo/settings"), null, null, null, null)?.use { c ->
             val col = c.getColumnIndex("auto")
-            if (col >= 0 && c.moveToFirst()) c.getInt(col) == 1 else null
+            val mode = c.getColumnIndex("mode")
+            // tryb "notify" też jest automatyczny (instalacja przy zatrzymanej apce) — o terminie decyduje [canInstallNow]
+            if (mode >= 0 && c.moveToFirst()) c.getString(mode) != "off"
+            else if (col >= 0 && c.moveToFirst()) c.getInt(col) == 1 else null
         }
     } catch (_: Exception) {
         null
+    }
+
+    /**
+     * Czy teraz wolno zainstalować aktualizację apki z własnym ustawieniem:
+     * "on" — zawsze, "notify" — tylko gdy apka jest zatrzymana, "off" — nigdy; przy nagrywaniu (busy) — czekamy.
+     * Starsza apka bez kolumny "mode": decyduje "auto".
+     */
+    fun canInstallNow(ctx: Context, pkg: String): Boolean = try {
+        ctx.contentResolver.query(Uri.parse("content://$pkg.updateinfo/settings"), null, null, null, null)?.use { c ->
+            if (!c.moveToFirst()) return@use false
+            fun int(name: String) = c.getColumnIndex(name).let { if (it >= 0) c.getInt(it) else 0 }
+            val modeCol = c.getColumnIndex("mode")
+            val mode = if (modeCol >= 0) c.getString(modeCol) else if (int("auto") == 1) "on" else "off"
+            when {
+                int("busy") == 1 -> false
+                mode == "on" -> true
+                mode == "notify" -> int("running") == 0
+                else -> false
+            }
+        } ?: false
+    } catch (_: Exception) {
+        false
     }
 
     /** Kanał aktualizacji ustawiony w apce ([AppItem.STABLE] / [AppItem.BETA]) albo null, gdy apka go nie udostępnia. */
