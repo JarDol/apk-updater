@@ -42,6 +42,9 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
     lint {
         abortOnError = false
         checkReleaseBuilds = false
@@ -52,4 +55,5 @@ dependencies {
     implementation("androidx.core:core:1.13.1")
     implementation("androidx.work:work-runtime:2.9.1")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }

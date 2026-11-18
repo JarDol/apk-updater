@@ -318,7 +318,7 @@ class MainActivity : Activity() {
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
         }
-        val msg = rowMsg[item.key]
+        val msg = (if (item.pkg == InstallRequest.PACKAGE) prefs.externalInstallMessage else null) ?: rowMsg[item.key]
         when {
             msg != null -> { st.text = msg; st.setTextColor(0xFFFFD54F.toInt()) }
             item.error != null -> { st.text = item.error; st.setTextColor(0xFFEF9A9A.toInt()) }
@@ -455,6 +455,7 @@ class MainActivity : Activity() {
 
     private fun chooseVersion(item: AppItem) {
         if (!item.releaseConfigLoaded || !versionsLoading.add(item.key)) return
+        if (item.pkg == InstallRequest.PACKAGE) prefs.externalInstallMessage = null
         rowMsg[item.key] = "Pobieranie wydań…"
         render()
         io.execute {
@@ -507,6 +508,7 @@ class MainActivity : Activity() {
             Installer.openInstallPermission(this)
             return
         }
+        if (item.pkg == InstallRequest.PACKAGE) prefs.externalInstallMessage = null
         busy.add(item.key)
         rowMsg[item.key] = "Pobieranie…"
         render()

@@ -13,6 +13,14 @@ object Notify {
     private const val CH_INSTALL = "install"
     private const val ID_UPDATES = 1
 
+    fun canConfirm(ctx: Context): Boolean {
+        val nm = NotificationManagerCompat.from(ctx)
+        return nm.areNotificationsEnabled() && (Build.VERSION.SDK_INT < 26 ||
+            nm.getNotificationChannel(CH_INSTALL)?.let {
+                it.importance != NotificationManagerCompat.IMPORTANCE_NONE
+            } == true)
+    }
+
     fun createChannels(ctx: Context) {
         val nm = NotificationManagerCompat.from(ctx)
         nm.createNotificationChannel(
@@ -77,12 +85,21 @@ object Notify {
     }
 
     fun error(ctx: Context, pkg: String, name: String, msg: String) {
-        show(ctx, idFor(pkg), NotificationCompat.Builder(ctx, CH_UPDATES)
+        show(ctx, idFor(pkg), NotificationCompat.Builder(ctx, CH_INSTALL)
             .setSmallIcon(R.drawable.ic_notify)
             .setContentTitle("$name — nie zainstalowano")
             .setContentText(msg)
             .setContentIntent(openApp(ctx))
             .setAutoCancel(true))
+    }
+
+    fun installing(ctx: Context, pkg: String, name: String, version: String) {
+        show(ctx, idFor(pkg), NotificationCompat.Builder(ctx, CH_INSTALL)
+            .setSmallIcon(R.drawable.ic_notify)
+            .setContentTitle("$name — pobieranie")
+            .setContentText(version)
+            .setContentIntent(openApp(ctx))
+            .setOnlyAlertOnce(true))
     }
 
     fun cancel(ctx: Context, pkg: String) = NotificationManagerCompat.from(ctx).cancel(idFor(pkg))

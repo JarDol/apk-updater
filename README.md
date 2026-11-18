@@ -60,8 +60,8 @@ Wzór: `UpdateInfoProvider.kt` w E2Stream (`JarDol/enigma2-epgscan`, katalog `e2
   (domyślnie tylko sam aktualizator). Apki z `selfUpdate` – wg własnego ustawienia (wyżej).
 - Limit zapytań GitHub (60/h bez tokena) liczony jest osobno dla każdego repo: po jego wyczerpaniu to repo zostaje z ostatnimi danymi i pokazuje, za ile limit się odnowi, a pozostałe działają dalej. Token podnosi limit do 5000/h.
 - Sprawdzanie w tle co 6 h (do zmiany w ustawieniach), powiadomienie o nowych wersjach.
-- Android 12+: aktualizacje apek zainstalowanych przez aktualizator idą bez pytania.
-  Starsze systemy (np. Mi Box) zawsze pokażą systemowe okno „Zainstaluj”.
+- Android 12+: system może pozwolić na aktualizacje bez pytania dla apek zainstalowanych przez aktualizator.
+  Decyduje Android; gdy wymaga potwierdzenia, aktualizator pokazuje systemowe okno lub powiadomienie.
 - Bez tokena GitHub limit to 60 zapytań/h na całą sieć domową — w zupełności wystarcza;
   token (ustawienia) potrzebny tylko dla prywatnych repo.
 
@@ -69,3 +69,36 @@ Wzór: `UpdateInfoProvider.kt` w E2Stream (`JarDol/enigma2-epgscan`, katalog `e2
 
 Pobierz `apk-updater-X.Y.Z.apk` z [Releases](../../releases) (np. przez Downloader) i zainstaluj.
 Przy pierwszej instalacji apki trzeba zezwolić aktualizatorowi na instalowanie aplikacji.
+
+## Przekazanie instalacji z E2Stream
+
+E2Stream może przekazać ręcznie wybrane wydanie do APK Updatera przez `startActivityForResult`
+(lub Activity Result API). Intent wymaga akcji `pl.jardol.apkupdater.action.REQUEST_INSTALL`,
+`setPackage("pl.jardol.apkupdater")` i poniższych extras z prefiksem `pl.jardol.apkupdater.extra.`:
+
+| Extra | Wartość |
+| --- | --- |
+| `REPOSITORY` | `JarDol/enigma2-epgscan` |
+| `PACKAGE` | `pl.jardol.e2stream` |
+| `VERSION` | Pełny oryginalny `tag_name`, np. `e2stream-0.18.75-beta.1` |
+| `CHANNEL` | Wymagany `stable` lub `beta`; stable nie przyjmuje prerelease |
+| `ALLOW_DOWNGRADE` | Domyślnie false; true wyłącznie po ostrzeżeniu i zgodzie użytkownika E2Stream |
+
+Nie wolno dodawać `FLAG_ACTIVITY_NEW_TASK`: Updater wymaga systemowego `callingActivity` i sprawdza,
+czy jest to E2Stream podpisany certyfikatem SHA-256
+`a49dd189ff764da20075deb49ab2807943b841ad63f63ba108b4d78364098da6`.
+Nazwy pakietów z extras ani referrer nie służą do autoryzacji. Inne aplikacje i inne podpisy są odrzucane.
+Rotacja certyfikatu wymaga świadomej aktualizacji tego przypięcia w APK Updaterze.
+
+Updater sprawdza dokładny release w zaufanym katalogu `updater.json`, nie przyjmuje adresu APK od wywołującego.
+Pobrane APK musi mieć właściwy pakiet, wersję i przypięty podpis. Zgoda na downgrade nie omija ograniczeń Androida.
+Kanał i wybór ręczny nie zmieniają ustawień automatycznych aktualizacji.
+
+`RESULT_OK` oznacza **trwałe przyjęcie zadania WorkManager**, a nie pomyślną instalację.
+Zawiera `REQUEST_ID` i `MESSAGE` z tym samym prefiksem extras. Dopiero wtedy E2Stream może się zamknąć.
+`RESULT_CANCELED` z `MESSAGE` oznacza błąd przyjęcia; E2Stream powinien pozostać otwarty.
+Przed przyjęciem wymagane są uprawnienie instalowania aplikacji i powiadomienia z włączonym kanałem Instalacja.
+Po włączeniu brakujących uprawnień użytkownik ponawia zlecenie.
+Pobieranie i instalacja należą już do Updatera; system może nadal wymagać potwierdzenia przez powiadomienie.
+Ostateczny wynik, anulowanie i błędy są pokazywane przez Updatera; ostatni komunikat pozostaje przy E2Stream
+także po ponownym uruchomieniu Updatera.

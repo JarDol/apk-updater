@@ -150,6 +150,14 @@ class Prefs(ctx: Context) {
     var lastCheck: Long
         get() = sp.getLong("lastCheck", 0)
         set(v) = sp.edit().putLong("lastCheck", v).apply()
+
+    var externalInstallMessage: String?
+        get() = sp.getString("externalInstallMessage", null)
+        set(v) {
+            check(sp.edit().putString("externalInstallMessage", v).commit()) {
+                "Nie można zapisać wyniku instalacji"
+            }
+        }
 }
 
 object BuildConfigPkg {

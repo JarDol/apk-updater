@@ -21,6 +21,7 @@ object Installer {
     const val EXTRA_PKG = "pkg"
     const val EXTRA_NAME = "name"
     const val EXTRA_FILE = "file"
+    const val EXTRA_REQUEST = "externalRequest"
 
     fun canInstall(ctx: Context): Boolean =
         Build.VERSION.SDK_INT < 26 || ctx.packageManager.canRequestPackageInstalls()
@@ -45,18 +46,30 @@ object Installer {
         ctx: Context,
         item: AppItem,
         allowDowngrade: Boolean = false,
+        request: InstallRequest? = null,
         progress: (Int) -> Unit,
     ) {
         if (!canInstall(ctx)) throw NeedInstallPermission()
         // Jedno pobieranie naraz (klik + zadanie w tle nie mogą pisać do tego samego pliku).
-        val apk = synchronized(this) {
+        synchronized(this) {
             var last: IOException? = null
             var ok: File? = null
             for (attempt in 1..2) {
                 try {
                     val candidate = download(ctx, item, progress)
-                    val candidateCode = verify(ctx, candidate, item.pkg)
-                    if (isDowngrade(item.installedCode, candidateCode) && !allowDowngrade) {
+                    val candidateCode = verify(ctx, candidate, item, request)
+                    @Suppress("DEPRECATION")
+                    val installedInfo = if (request != null) ctx.packageManager.getPackageInfo(item.pkg, 0) else null
+                    val installedCode = installedInfo?.let { PackageInfoCompat.getLongVersionCode(it) } ?: item.installedCode
+                    if (request != null) {
+                        try {
+                            request.validateDowngrade(installedInfo?.versionName, item.latest, installedCode, candidateCode)
+                        } catch (e: IllegalArgumentException) {
+                            candidate.delete()
+                            throw IOException(e.message, e)
+                        }
+                    }
+                    if (isDowngrade(installedCode, candidateCode) && !allowDowngrade) {
                         candidate.delete()
                         throw IOException("Pobrane APK jest starsze. Wybierz wydanie ręcznie i potwierdź downgrade.")
                     }
@@ -64,10 +77,14 @@ object Installer {
                     break
                 } catch (e: IOException) { last = e }
             }
-            val file = ok ?: throw last!!
-            file
+            val apk = ok ?: throw last!!
+            try {
+                install(ctx, apk, item, request != null)
+            } catch (e: Exception) {
+                apk.delete()
+                throw e
+            }
         }
-        install(ctx, apk, item)
     }
 
     /**
@@ -155,13 +172,25 @@ object Installer {
     }
 
     /** Pobrany plik musi być tą apką, którą deklaruje updater.json. */
-    private fun verify(ctx: Context, apk: File, pkg: String): Long {
+    private fun verify(ctx: Context, apk: File, item: AppItem, request: InstallRequest?): Long {
         @Suppress("DEPRECATION")
-        val info = ctx.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
+        val info = ctx.packageManager.getPackageArchiveInfo(apk.absolutePath,
+            if (request != null) InstallRequest.signatureFlags() else 0)
             ?: run { apk.delete(); throw IOException("Pobrany plik nie jest poprawnym APK") }
-        if (info.packageName != pkg) {
+        if (info.packageName != item.pkg) {
             apk.delete()
-            throw IOException("APK ma pakiet ${info.packageName}, oczekiwano $pkg")
+            throw IOException("APK ma pakiet ${info.packageName}, oczekiwano ${item.pkg}")
+        }
+        if (request != null) {
+            try {
+                request.validateApk(info.packageName, info.versionName, item.latest, InstallRequest.certificates(info))
+                require(InstallRequest.callerCertificates(ctx, item.pkg) == listOf(InstallRequest.CERTIFICATE)) {
+                    "Podpis zainstalowanej aplikacji E2Stream zmienił się"
+                }
+            } catch (e: IllegalArgumentException) {
+                apk.delete()
+                throw IOException(e.message, e)
+            }
         }
         return PackageInfoCompat.getLongVersionCode(info)
     }
@@ -169,7 +198,10 @@ object Installer {
     internal fun isDowngrade(installedCode: Long, apkCode: Long) =
         installedCode >= 0 && apkCode < installedCode
 
-    private fun install(ctx: Context, apk: File, item: AppItem) {
+    private fun install(ctx: Context, apk: File, item: AppItem, externalRequest: Boolean) {
+        check(!externalRequest || Notify.canConfirm(ctx)) {
+            "Włącz powiadomienia APK Updatera, aby potwierdzić instalację"
+        }
         val pi = ctx.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(item.pkg)
@@ -192,6 +224,7 @@ object Installer {
                     .putExtra(EXTRA_PKG, item.pkg)
                     .putExtra(EXTRA_NAME, item.name)
                     .putExtra(EXTRA_FILE, apk.absolutePath)
+                    .putExtra(EXTRA_REQUEST, externalRequest)
                 var flags = PendingIntent.FLAG_UPDATE_CURRENT
                 if (Build.VERSION.SDK_INT >= 31) flags = flags or PendingIntent.FLAG_MUTABLE
                 val pending = PendingIntent.getBroadcast(ctx, id, intent, flags)

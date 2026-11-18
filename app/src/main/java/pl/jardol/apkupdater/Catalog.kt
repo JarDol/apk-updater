@@ -198,6 +198,38 @@ object Catalog {
     /** Ostatnio pobrana lista (bez sieci). */
     fun cached(ctx: Context): List<AppItem> = withInstalled(ctx, savedItems(Prefs(ctx)))
 
+    /** Wyłącznie wskazane wydanie E2Stream z zaufanego katalogu (poza wątkiem UI). */
+    fun requestedRelease(ctx: Context, request: InstallRequest): AppItem {
+        val source = Prefs(ctx).sources.firstOrNull {
+            it.spec.equals(InstallRequest.REPOSITORY, true) ||
+                (!it.isRepo && it.spec.equals("JarDol", true))
+        }
+        val token = source?.token ?: ""
+        val repo = JSONObject(Http.get(ctx, "https://api.github.com/repos/${InstallRequest.REPOSITORY}", token))
+        val definition = readRepo(ctx, InstallRequest.REPOSITORY, repo.getString("default_branch"), "E2Stream", token)
+            .firstOrNull { it.pkg == InstallRequest.PACKAGE && it.releaseConfigLoaded }
+            ?: error("Brak E2Stream w zaufanym katalogu; odśwież repozytorium")
+        require(request.version.startsWith(definition.tagPrefix)) { "Tag nie należy do E2Stream" }
+        val release = JSONObject(Http.get(ctx,
+            "https://api.github.com/repos/${InstallRequest.REPOSITORY}/releases/tags/${request.version}", token))
+        val item = fromRelease(
+            definition.repo, definition.name, definition.pkg, release,
+            definition.assetPattern?.let { Regex(it) }, definition.tagPrefix, definition.assetPattern,
+        )
+        request.validateRelease(release.getString("tag_name"), release.optBoolean("draft"),
+            release.optBoolean("prerelease"), item.canInstall)
+        require(item.apkName?.let { java.io.File(it).name == it && !it.contains('\\') } == true) {
+            "Nieprawidłowa nazwa pliku APK"
+        }
+        require(item.apkUrl?.startsWith("https://github.com/${InstallRequest.REPOSITORY}/releases/download/${request.version}/") == true &&
+            item.apkApiUrl?.startsWith("https://api.github.com/repos/${InstallRequest.REPOSITORY}/releases/assets/") == true) {
+            "APK nie pochodzi z zaufanego wydania"
+        }
+        val target = withInstalled(ctx, listOf(item.copy(source = source?.id ?: "", channel = request.channel))).single()
+        request.validateDowngrade(target.installed, target.latest)
+        return target
+    }
+
     /** Dostępne wydania danej apki (sieć — poza wątkiem UI). */
     fun releasesFor(ctx: Context, item: AppItem): List<AppItem> {
         val p = Prefs(ctx)

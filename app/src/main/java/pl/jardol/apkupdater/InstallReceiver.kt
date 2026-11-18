@@ -15,12 +15,21 @@ class InstallReceiver : BroadcastReceiver() {
         val pkg = intent.getStringExtra(Installer.EXTRA_PKG) ?: ""
         val name = intent.getStringExtra(Installer.EXTRA_NAME) ?: pkg
         val file = intent.getStringExtra(Installer.EXTRA_FILE)
+        val external = intent.getBooleanExtra(Installer.EXTRA_REQUEST, false)
+        if (!external && pkg == InstallRequest.PACKAGE) Prefs(ctx).externalInstallMessage = null
 
         when (status) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 val confirm = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java)
-                    ?: return
+                if (confirm == null) {
+                    val message = "Android nie przekazał potwierdzenia instalacji; spróbuj ponownie"
+                    if (external) InstallRequestWorker.report(ctx, message)
+                    Notify.error(ctx, pkg, name, message)
+                    App.post(pkg, message)
+                    return
+                }
                 confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (external) InstallRequestWorker.report(ctx, "Czeka na potwierdzenie instalacji")
                 if (App.foreground) {
                     try { ctx.startActivity(confirm); return } catch (_: Exception) { }
                 }
@@ -31,6 +40,7 @@ class InstallReceiver : BroadcastReceiver() {
             PackageInstaller.STATUS_SUCCESS -> {
                 file?.let { File(it).delete() }
                 Notify.cancel(ctx, pkg)
+                if (external) InstallRequestWorker.report(ctx, "Zainstalowano")
                 if (!App.foreground) Notify.done(ctx, pkg, name)
                 App.post(pkg, null)
             }
@@ -50,6 +60,7 @@ class InstallReceiver : BroadcastReceiver() {
                     status == PackageInstaller.STATUS_FAILURE_BLOCKED -> "Instalacja zablokowana przez system"
                     else -> "Błąd instalacji"
                 } + if (msg != null && !downgradeBlocked) " ($msg)" else ""
+                if (external) InstallRequestWorker.report(ctx, text)
                 if (!App.foreground) Notify.error(ctx, pkg, name, text)
                 App.post(pkg, text)
             }
