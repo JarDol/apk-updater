@@ -113,9 +113,16 @@ class InstallHandoffAndroidTest {
         .putExtra(InstallRequest.EXTRA + "CHANNEL", AppItem.BETA)
         .putExtra(InstallRequest.EXTRA + "ALLOW_DOWNGRADE", true)
 
-    private fun result(status: Int) = Intent(ctx, InstallReceiver::class.java)
-        .putExtra(PackageInstaller.EXTRA_STATUS, status)
-        .putExtra(Installer.EXTRA_PKG, InstallRequest.PACKAGE)
-        .putExtra(Installer.EXTRA_NAME, "E2Stream")
-        .putExtra(Installer.EXTRA_REQUEST, true)
+    private fun result(status: Int): Intent {
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        params.setAppPackageName(InstallRequest.PACKAGE)
+        val session = ctx.packageManager.packageInstaller.createSession(params)
+        InstallConfirmation.begin(ctx, InstallRequest.PACKAGE, session)
+        return Intent(ctx, InstallReceiver::class.java)
+            .putExtra(PackageInstaller.EXTRA_STATUS, status)
+            .putExtra(Installer.EXTRA_PKG, InstallRequest.PACKAGE)
+            .putExtra(Installer.EXTRA_NAME, "E2Stream")
+            .putExtra(Installer.EXTRA_REQUEST, true)
+            .putExtra(Installer.EXTRA_SESSION, session)
+    }
 }

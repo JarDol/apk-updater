@@ -13,14 +13,6 @@ object Notify {
     private const val CH_INSTALL = "install"
     private const val ID_UPDATES = 1
 
-    fun canConfirm(ctx: Context): Boolean {
-        val nm = NotificationManagerCompat.from(ctx)
-        return nm.areNotificationsEnabled() && (Build.VERSION.SDK_INT < 26 ||
-            nm.getNotificationChannel(CH_INSTALL)?.let {
-                it.importance != NotificationManagerCompat.IMPORTANCE_NONE
-            } == true)
-    }
-
     fun createChannels(ctx: Context) {
         val nm = NotificationManagerCompat.from(ctx)
         nm.createNotificationChannel(
@@ -65,12 +57,11 @@ object Notify {
 
     fun cancelUpdates(ctx: Context) = NotificationManagerCompat.from(ctx).cancel(ID_UPDATES)
 
-    fun confirm(ctx: Context, pkg: String, name: String, confirm: Intent) {
-        val pi = PendingIntent.getActivity(ctx, idFor(pkg), confirm, immutable())
+    fun confirm(ctx: Context, pkg: String, name: String, pi: PendingIntent) {
         show(ctx, idFor(pkg), NotificationCompat.Builder(ctx, CH_INSTALL)
             .setSmallIcon(R.drawable.ic_notify)
             .setContentTitle("$name — gotowe do instalacji")
-            .setContentText("Dotknij, aby zainstalować")
+            .setContentText("Potwierdź tutaj lub przyciskiem na karcie aplikacji w APK Updaterze")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pi)
             .setAutoCancel(true))

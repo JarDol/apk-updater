@@ -300,6 +300,7 @@ class MainActivity : Activity() {
         }
         val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val self = item.pkg == packageName
+        val pendingSession = InstallConfirmation.pendingSession(this, item.pkg)
         info.addView(text(20f, Color.WHITE, true).apply {
             text = item.name + if (self) "  (ta apka)" else ""
         })
@@ -334,6 +335,14 @@ class MainActivity : Activity() {
         row.addView(info, lp(0, -2, 1f))
 
         val isBusy = item.key in busy
+        if (pendingSession != null) {
+            row.addView(button("Potwierdź instalację") {
+                InstallConfirmation.launch(this, item.pkg, pendingSession)?.let { toast(it) }
+                render(item.key)
+            }.apply {
+                tag = item.key; setTag(R.id.role, "confirm-install")
+            }, lp(-2, -2, left = dp(8)))
+        }
         val action = when {
             !item.canInstall -> null
             !item.isInstalled -> "Zainstaluj"

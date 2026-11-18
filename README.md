@@ -102,8 +102,16 @@ Kanał i wybór ręczny nie zmieniają ustawień automatycznych aktualizacji.
 `RESULT_OK` oznacza **trwałe przyjęcie zadania WorkManager**, a nie pomyślną instalację.
 Zawiera `REQUEST_ID` i `MESSAGE` z tym samym prefiksem extras. Dopiero wtedy E2Stream może się zamknąć.
 `RESULT_CANCELED` z `MESSAGE` oznacza błąd przyjęcia; E2Stream powinien pozostać otwarty.
-Przed przyjęciem wymagane są uprawnienie instalowania aplikacji i powiadomienia z włączonym kanałem Instalacja.
-Po włączeniu brakujących uprawnień użytkownik ponawia zlecenie.
-Pobieranie i instalacja należą już do Updatera; system może nadal wymagać potwierdzenia przez powiadomienie.
+Przed przyjęciem wymagane jest uprawnienie instalowania aplikacji. Po jego włączeniu użytkownik ponawia zlecenie.
+Powiadomienia są opcjonalne: systemowe potwierdzenie można otworzyć dostępnym z pilota przyciskiem
+**Potwierdź instalację** na karcie aplikacji w APK Updaterze, bez ponownego pobierania APK.
+Pobieranie i instalacja należą już do Updatera; wymaganej przez Androida zgody nie można pominąć.
+Identyfikator bieżącej sesji jest zapisany, a oryginalną akcję systemową przechowuje prywatny,
+niezmienny `PendingIntent` przypisany do tej sesji. Przycisk działa także po odtworzeniu interfejsu
+i procesu, dopóki Android zachowuje sesję oraz akcję. Nie przyjmuje Intentów od interfejsu ani innych aplikacji.
+Po sukcesie, anulowaniu lub zastąpieniu zlecenia poprzednia akcja jest unieważniana.
+Jeżeli system usunie sesję/akcję (np. po restarcie urządzenia), Updater wyświetla błąd wygaśnięcia.
+Potwierdzenia utworzone przed beta.3 nie miały zapisanego powiązania z sesją;
+takie starsze zlecenie należy raz ponowić po aktualizacji Updatera.
 Ostateczny wynik, anulowanie i błędy są pokazywane przez Updatera; ostatni komunikat pozostaje przy E2Stream
 także po ponownym uruchomieniu Updatera.

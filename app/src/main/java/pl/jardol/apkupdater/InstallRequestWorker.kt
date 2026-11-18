@@ -14,7 +14,6 @@ class InstallRequestWorker(ctx: Context, params: WorkerParameters) : Worker(ctx,
                 requireNotNull(inputData.getString("channel")),
                 inputData.getBoolean("allowDowngrade", false),
             )
-            check(Notify.canConfirm(ctx)) { "Włącz powiadomienia APK Updatera, aby potwierdzić instalację" }
             require(InstallRequest.callerCertificates(ctx, InstallRequest.PACKAGE) == listOf(InstallRequest.CERTIFICATE)) {
                 "Nieprawidłowy podpis zainstalowanej aplikacji E2Stream"
             }

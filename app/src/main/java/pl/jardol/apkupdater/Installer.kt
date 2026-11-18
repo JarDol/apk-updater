@@ -22,6 +22,7 @@ object Installer {
     const val EXTRA_NAME = "name"
     const val EXTRA_FILE = "file"
     const val EXTRA_REQUEST = "externalRequest"
+    const val EXTRA_SESSION = "installSession"
 
     fun canInstall(ctx: Context): Boolean =
         Build.VERSION.SDK_INT < 26 || ctx.packageManager.canRequestPackageInstalls()
@@ -52,6 +53,7 @@ object Installer {
         if (!canInstall(ctx)) throw NeedInstallPermission()
         // Jedno pobieranie naraz (klik + zadanie w tle nie mogą pisać do tego samego pliku).
         synchronized(this) {
+            InstallConfirmation.replace(ctx, item.pkg)
             var last: IOException? = null
             var ok: File? = null
             for (attempt in 1..2) {
@@ -199,9 +201,6 @@ object Installer {
         installedCode >= 0 && apkCode < installedCode
 
     private fun install(ctx: Context, apk: File, item: AppItem, externalRequest: Boolean) {
-        check(!externalRequest || Notify.canConfirm(ctx)) {
-            "Włącz powiadomienia APK Updatera, aby potwierdzić instalację"
-        }
         val pi = ctx.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(item.pkg)
@@ -212,6 +211,7 @@ object Installer {
         }
         val id = pi.createSession(params)
         try {
+            InstallConfirmation.begin(ctx, item.pkg, id)
             pi.openSession(id).use { s ->
                 apk.inputStream().use { input ->
                     s.openWrite("base.apk", 0, apk.length()).use { out ->
@@ -225,12 +225,14 @@ object Installer {
                     .putExtra(EXTRA_NAME, item.name)
                     .putExtra(EXTRA_FILE, apk.absolutePath)
                     .putExtra(EXTRA_REQUEST, externalRequest)
+                    .putExtra(EXTRA_SESSION, id)
                 var flags = PendingIntent.FLAG_UPDATE_CURRENT
                 if (Build.VERSION.SDK_INT >= 31) flags = flags or PendingIntent.FLAG_MUTABLE
                 val pending = PendingIntent.getBroadcast(ctx, id, intent, flags)
                 s.commit(pending.intentSender)
             }
         } catch (e: Exception) {
+            InstallConfirmation.clear(ctx, item.pkg, id)
             try { pi.abandonSession(id) } catch (_: Exception) { }
             throw e
         }
