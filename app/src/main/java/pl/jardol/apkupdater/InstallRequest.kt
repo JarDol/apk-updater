@@ -45,6 +45,15 @@ data class InstallRequest(val version: String, val channel: String, val allowDow
             PackageManager.GET_SIGNING_CERTIFICATES else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
 
         @Suppress("DEPRECATION")
+        internal fun archiveSignatureFlags(): Int =
+            // Older archive parsers need GET_SIGNATURES to collect certificates, even on API 28+.
+            signatureFlags() or PackageManager.GET_SIGNATURES
+
+        @Suppress("DEPRECATION")
+        internal fun readArchive(ctx: Context, path: String): PackageInfo? =
+            ctx.packageManager.getPackageArchiveInfo(path, archiveSignatureFlags())
+
+        @Suppress("DEPRECATION")
         fun callerCertificates(ctx: Context, pkg: String): List<String> =
             certificates(ctx.packageManager.getPackageInfo(pkg, signatureFlags()))
     }

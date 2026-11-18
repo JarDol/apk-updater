@@ -174,8 +174,8 @@ object Installer {
     /** Pobrany plik musi być tą apką, którą deklaruje updater.json. */
     private fun verify(ctx: Context, apk: File, item: AppItem, request: InstallRequest?): Long {
         @Suppress("DEPRECATION")
-        val info = ctx.packageManager.getPackageArchiveInfo(apk.absolutePath,
-            if (request != null) InstallRequest.signatureFlags() else 0)
+        val info = (if (request != null) InstallRequest.readArchive(ctx, apk.absolutePath)
+            else ctx.packageManager.getPackageArchiveInfo(apk.absolutePath, 0))
             ?: run { apk.delete(); throw IOException("Pobrany plik nie jest poprawnym APK") }
         if (info.packageName != item.pkg) {
             apk.delete()

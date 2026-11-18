@@ -20,7 +20,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(application = Application::class, sdk = [21, 35])
+@Config(application = Application::class, sdk = [21, 28, 35])
 class InstallHandoffAndroidTest {
     private val ctx get() = RuntimeEnvironment.getApplication()
 

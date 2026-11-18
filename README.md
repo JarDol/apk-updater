@@ -89,6 +89,11 @@ czy jest to E2Stream podpisany certyfikatem SHA-256
 `a49dd189ff764da20075deb49ab2807943b841ad63f63ba108b4d78364098da6`.
 Nazwy pakietów z extras ani referrer nie służą do autoryzacji. Inne aplikacje i inne podpisy są odrzucane.
 Rotacja certyfikatu wymaga świadomej aktualizacji tego przypięcia w APK Updaterze.
+Na Androidzie 9 odczyt certyfikatu pobranego archiwum APK wymaga dodatkowo starszej flagi
+`GET_SIGNATURES`; dla zgodności archiwa otrzymują obie flagi na API 28+, ale odczyt bieżącego
+podpisu nadal wymaga `signingInfo` (bez odwołania do starszych podpisów z historii).
+Sprawdzanie tożsamości zainstalowanego wywołującego pozostaje bez zmian.
+Brak podpisu lub podpis niezgodny z przypiętym certyfikatem powoduje odrzucenie APK.
 
 Updater sprawdza dokładny release w zaufanym katalogu `updater.json`, nie przyjmuje adresu APK od wywołującego.
 Pobrane APK musi mieć właściwy pakiet, wersję i przypięty podpis. Zgoda na downgrade nie omija ograniczeń Androida.
