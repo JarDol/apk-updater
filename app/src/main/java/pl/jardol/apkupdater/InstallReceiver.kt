@@ -40,6 +40,7 @@ class InstallReceiver : BroadcastReceiver() {
                 Notify.cancel(ctx, pkg)
                 if (!App.foreground) Notify.done(ctx, pkg, name)
                 App.post(pkg, null)
+                CacheCleanup.scheduleNow(ctx)
             }
             else -> {
                 val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
@@ -58,6 +59,7 @@ class InstallReceiver : BroadcastReceiver() {
                 } + if (msg != null && !downgradeBlocked) " ($msg)" else ""
                 if (!App.foreground) Notify.error(ctx, pkg, name, text)
                 App.post(pkg, text)
+                CacheCleanup.scheduleNow(ctx)
             }
         }
     }

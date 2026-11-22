@@ -70,4 +70,45 @@ class InstallFilesTest {
         assertTrue(unrelated.exists())
         assertTrue(legacy.exists())
     }
+
+    @Test
+    fun installedCleanupHandlesLegacyAndIsolatedFilesWithoutRemovingOthers() {
+        val cache = temporary.root
+        val matched = InstallFiles.newDownload(cache).apply { writeText("installed") }
+        val part = File(matched.parentFile, matched.name + ".part").apply { writeText("partial") }
+        val different = InstallFiles.newDownload(cache).apply { writeText("different") }
+        val orphan = InstallFiles.newDownload(cache)
+        val orphanPart = File(orphan.parentFile, orphan.name + ".part").apply { writeText("partial") }
+        val legacy = File(File(cache, "apk"), "old.apk").apply { writeText("installed") }
+        val legacyPart = File(legacy.parentFile, legacy.name + ".part").apply { writeText("partial") }
+
+        assertTrue(InstallFiles.cleanupInstalled(cache, false) { it.readText() == "installed" })
+
+        assertFalse(matched.exists())
+        assertFalse(part.exists())
+        assertFalse(legacy.exists())
+        assertFalse(legacyPart.exists())
+        assertEquals("different", different.readText())
+        assertEquals("partial", orphanPart.readText())
+    }
+
+    @Test
+    fun installedCleanupWaitsForActiveSessions() {
+        val cache = temporary.root
+        val apk = InstallFiles.newDownload(cache).apply { writeText("installed") }
+        assertFalse(InstallFiles.cleanupInstalled(cache, true) { true })
+        assertTrue(apk.exists())
+        assertTrue(InstallFiles.cleanupInstalled(cache, false) { true })
+        assertFalse(apk.exists())
+    }
+
+    @Test
+    fun installedIdentityRequiresSamePackageVersionAndNonemptySignature() {
+        val installed = ApkIdentity("example.app", 7, setOf("signature"))
+        assertTrue(installed.matches(ApkIdentity("example.app", 7, setOf("signature"))))
+        assertFalse(installed.matches(ApkIdentity("other.app", 7, setOf("signature"))))
+        assertFalse(installed.matches(ApkIdentity("example.app", 8, setOf("signature"))))
+        assertFalse(installed.matches(ApkIdentity("example.app", 7, setOf("other"))))
+        assertFalse(ApkIdentity("example.app", 7, emptySet()).matches(ApkIdentity("example.app", 7, emptySet())))
+    }
 }

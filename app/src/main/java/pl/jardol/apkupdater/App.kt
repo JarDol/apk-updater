@@ -17,6 +17,7 @@ class App : Application() {
         super.onCreate()
         Notify.createChannels(this)
         schedule(this)
+        CacheCleanup.schedule(this)
     }
 
     companion object {

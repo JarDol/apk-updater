@@ -49,28 +49,29 @@ object Installer {
         progress: (Int) -> Unit,
     ) {
         if (!canInstall(ctx)) throw NeedInstallPermission()
-        // Jedno pobieranie naraz.
-        val apk = synchronized(this) {
-            var last: IOException? = null
-            var ok: File? = null
-            for (attempt in 1..2) {
-                try {
-                    val candidate = download(ctx, item, progress)
-                    val candidateCode = verify(ctx, candidate, item.pkg)
-                    if (isDowngrade(item.installedCode, candidateCode) && !allowDowngrade) {
-                        throw IOException("Pobrane APK jest starsze. Wybierz wydanie ręcznie i potwierdź downgrade.")
-                    }
-                    ok = candidate
-                    break
-                } catch (e: IOException) { last = e }
+        try {
+            synchronized(this) {
+                var last: IOException? = null
+                var ok: File? = null
+                for (attempt in 1..2) {
+                    try {
+                        val candidate = download(ctx, item, progress)
+                        val candidateCode = verify(ctx, candidate, item.pkg)
+                        if (isDowngrade(item.installedCode, candidateCode) && !allowDowngrade) {
+                            throw IOException("Pobrane APK jest starsze. Wybierz wydanie ręcznie i potwierdź downgrade.")
+                        }
+                        ok = candidate
+                        break
+                    } catch (e: IOException) { last = e }
+                }
+                install(ctx, ok ?: throw last!!, item)
             }
-            val file = ok ?: throw last!!
-            file
+        } finally {
+            CacheCleanup.scheduleNow(ctx)
         }
-        install(ctx, apk, item)
     }
 
-    fun download(ctx: Context, item: AppItem, progress: (Int) -> Unit): File {
+    private fun download(ctx: Context, item: AppItem, progress: (Int) -> Unit): File {
         val token = Prefs(ctx).tokenFor(item.source)
         val out = InstallFiles.newDownload(ctx.cacheDir)
         val tmp = File(out.parentFile, out.name + ".part")

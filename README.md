@@ -63,7 +63,10 @@ Wzór: `UpdateInfoProvider.kt` w E2Stream (`JarDol/enigma2-epgscan`, katalog `e2
 - Android 12+: aktualizacje apek zainstalowanych przez aktualizator idą bez pytania.
   Starsze systemy (np. Mi Box) zawsze pokażą systemowe okno „Zainstaluj”.
 - Po potwierdzeniu przez Androida powodzenia konkretnej instalacji jej pobrane pliki APK i `.part`
-  są usuwane. Przy anulowaniu lub błędzie pozostają w pamięci podręcznej; inne instalacje nie są sprzątane.
+  są usuwane. Przy anulowaniu lub błędzie pozostają, chyba że ta sama wersja jest już zainstalowana.
+- Niezależne zadanie sprawdza również pozostawione APK: usuwa je, jeśli Android ma już zainstalowany
+  ten sam pakiet, kod wersji i podpis. Podczas pobierania lub aktywnej sesji instalacji sprzątanie czeka.
+  Niekompletne `.part`, których nie da się powiązać ze sprawdzonym APK, pozostają w pamięci podręcznej.
 - Bez tokena GitHub limit to 60 zapytań/h na całą sieć domową — w zupełności wystarcza;
   token (ustawienia) potrzebny tylko dla prywatnych repo.
 
