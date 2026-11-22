@@ -21,6 +21,7 @@ object Installer {
     const val EXTRA_PKG = "pkg"
     const val EXTRA_NAME = "name"
     const val EXTRA_FILE = "file"
+    const val EXTRA_SESSION = "session"
 
     fun canInstall(ctx: Context): Boolean =
         Build.VERSION.SDK_INT < 26 || ctx.packageManager.canRequestPackageInstalls()
@@ -48,7 +49,7 @@ object Installer {
         progress: (Int) -> Unit,
     ) {
         if (!canInstall(ctx)) throw NeedInstallPermission()
-        // Jedno pobieranie naraz (klik + zadanie w tle nie mogą pisać do tego samego pliku).
+        // Jedno pobieranie naraz.
         val apk = synchronized(this) {
             var last: IOException? = null
             var ok: File? = null
@@ -57,7 +58,6 @@ object Installer {
                     val candidate = download(ctx, item, progress)
                     val candidateCode = verify(ctx, candidate, item.pkg)
                     if (isDowngrade(item.installedCode, candidateCode) && !allowDowngrade) {
-                        candidate.delete()
                         throw IOException("Pobrane APK jest starsze. Wybierz wydanie ręcznie i potwierdź downgrade.")
                     }
                     ok = candidate
@@ -70,29 +70,10 @@ object Installer {
         install(ctx, apk, item)
     }
 
-    /**
-     * Pobrane APK nie zostają w pamięci podręcznej (każda wersja ma inną nazwę, ~100 MB każda):
-     * usuwane pliki starsze niż [minAgeMs] (domyślnie 10 min — nie ten, który właśnie się instaluje).
-     */
-    fun cleanup(ctx: Context, minAgeMs: Long = 10 * 60_000L): Long {
-        val dir = File(ctx.cacheDir, "apk")
-        val now = System.currentTimeMillis()
-        var freed = 0L
-        dir.listFiles()?.forEach { f ->
-            if (f.isFile && now - f.lastModified() > minAgeMs) {
-                val n = f.length()
-                if (f.delete()) freed += n
-            }
-        }
-        return freed
-    }
-
     fun download(ctx: Context, item: AppItem, progress: (Int) -> Unit): File {
         val token = Prefs(ctx).tokenFor(item.source)
-        cleanup(ctx)
-        val dir = File(ctx.cacheDir, "apk").apply { mkdirs() }
-        val out = File(dir, item.apkName ?: "${item.pkg}.apk")
-        val tmp = File(dir, out.name + ".part").apply { delete() }
+        val out = InstallFiles.newDownload(ctx.cacheDir)
+        val tmp = File(out.parentFile, out.name + ".part")
 
         // Z tokenem: przez API (działa też dla prywatnych repo). Bez: zwykły link.
         val useApi = token.isNotEmpty() && item.apkApiUrl != null
@@ -143,13 +124,11 @@ object Installer {
                 }
             }
             if (total > 0 && tmp.length() != total) {
-                tmp.delete()
                 throw IOException("Pobrano ${tmp.length()} z $total B — spróbuj ponownie")
             }
         } finally {
             c.disconnect()
         }
-        out.delete()
         if (!tmp.renameTo(out)) throw IOException("Nie mogę zapisać ${out.name}")
         return out
     }
@@ -158,9 +137,8 @@ object Installer {
     private fun verify(ctx: Context, apk: File, pkg: String): Long {
         @Suppress("DEPRECATION")
         val info = ctx.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
-            ?: run { apk.delete(); throw IOException("Pobrany plik nie jest poprawnym APK") }
+            ?: throw IOException("Pobrany plik nie jest poprawnym APK")
         if (info.packageName != pkg) {
-            apk.delete()
             throw IOException("APK ma pakiet ${info.packageName}, oczekiwano $pkg")
         }
         return PackageInfoCompat.getLongVersionCode(info)
@@ -189,9 +167,11 @@ object Installer {
                 }
                 val intent = Intent(ctx, InstallReceiver::class.java)
                     .setPackage(ctx.packageName)
+                    .setData(Uri.parse("apk-updater://install/${requireNotNull(apk.parentFile).name}"))
                     .putExtra(EXTRA_PKG, item.pkg)
                     .putExtra(EXTRA_NAME, item.name)
                     .putExtra(EXTRA_FILE, apk.absolutePath)
+                    .putExtra(EXTRA_SESSION, id)
                 var flags = PendingIntent.FLAG_UPDATE_CURRENT
                 if (Build.VERSION.SDK_INT >= 31) flags = flags or PendingIntent.FLAG_MUTABLE
                 val pending = PendingIntent.getBroadcast(ctx, id, intent, flags)

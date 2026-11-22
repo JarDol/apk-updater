@@ -62,6 +62,8 @@ Wzór: `UpdateInfoProvider.kt` w E2Stream (`JarDol/enigma2-epgscan`, katalog `e2
 - Sprawdzanie w tle co 6 h (do zmiany w ustawieniach), powiadomienie o nowych wersjach.
 - Android 12+: aktualizacje apek zainstalowanych przez aktualizator idą bez pytania.
   Starsze systemy (np. Mi Box) zawsze pokażą systemowe okno „Zainstaluj”.
+- Po potwierdzeniu przez Androida powodzenia konkretnej instalacji jej pobrane pliki APK i `.part`
+  są usuwane. Przy anulowaniu lub błędzie pozostają w pamięci podręcznej; inne instalacje nie są sprzątane.
 - Bez tokena GitHub limit to 60 zapytań/h na całą sieć domową — w zupełności wystarcza;
   token (ustawienia) potrzebny tylko dla prywatnych repo.
 

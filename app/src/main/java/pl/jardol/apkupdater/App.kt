@@ -17,7 +17,6 @@ class App : Application() {
         super.onCreate()
         Notify.createChannels(this)
         schedule(this)
-        Thread({ try { Installer.cleanup(this) } catch (_: Exception) { } }, "sprzatanie-apk").start()
     }
 
     companion object {
